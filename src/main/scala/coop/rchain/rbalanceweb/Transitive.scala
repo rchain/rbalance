@@ -21,11 +21,12 @@ import org.http4s.client._
 
 trait Closure[Key,Src] {  
   def computeClosure( src : Src, acc : Map[Key,Set[Src]], next : Src => Set[Src] ) : Map[Key,Set[Src]] = {
-    next( src ).foldLeft( acc + ( key( src ) -> next( src ) ) )( {
+    val nextGen = next( src )
+    nextGen.foldLeft( acc + ( key( src ) -> nextGen ) )( {
       ( a, x ) => {
         a.get( key( x ) ) match {
           case Some( v ) => a
-          case None => a ++ computeClosure( x, a, next )
+          case None => computeClosure( x, a, next )
         }
       }
     } )
@@ -97,7 +98,7 @@ object RHOCTxnClosure extends Closure[String,RHOCTxn] {
   val apiKey : String = "251USXDI6XCV4CQYA6UCQ6Y5JPBR7FPXAC"
   val blockHeight : Int = 9371743
 
-  def nextTxns( txn : RHOCTxn ) : Set[RHOCTxn] = {
+  def nextTxns( txn : RHOCTxn ) : Set[RHOCTxn] = {    
     val lowerCaseAddr = txn.trgt.toLowerCase()
     val etherscanURI =
       s"http://api.etherscan.io/api?module=account&action=tokentx&address=$lowerCaseAddr&startblock=0&endblock=999999999&sort=asc&apikey=$apiKey"
@@ -121,8 +122,11 @@ object RHOCTxnClosure extends Closure[String,RHOCTxn] {
         }
       } }
     )
-    println( "Next generation:" )
-    rslt.map( { txn => println( txn ) } )
+    val rsltSize = rslt.size
+    println( s"txn: $txn" )
+    println( s"Size of next generation:$rsltSize" )
+    //println( "Next generation:" )
+    //rslt.map( { txn => println( txn ) } )
     rslt
   }
 
