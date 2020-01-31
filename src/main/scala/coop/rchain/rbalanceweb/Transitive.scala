@@ -1,6 +1,8 @@
 package coop.rchain.rbalance.transitive
 import scala.collection.immutable.Set
 import scala.collection.immutable.HashSet
+import scala.collection.immutable.Map
+import scala.collection.immutable.HashMap
 
 //import scala.concurrent.ExecutionContext.global
 import scala.concurrent.ExecutionContext
@@ -17,12 +19,20 @@ import org.http4s.implicits._
 import org.http4s.client.blaze._
 import org.http4s.client._
 
-trait Closure[Src] {  
-  def computeClosure( src : Src, acc : Set[Src], next : Src => Set[Src] ) : Set[Src] = {
-    next( src ).flatMap( ( x ) =>{ computeClosure( x, acc, next ) } ) + src
+trait Closure[Key,Src] {  
+  def computeClosure( src : Src, acc : Map[Key,Set[Src]], next : Src => Set[Src] ) : Map[Key,Set[Src]] = {
+    next( src ).foldLeft( acc + ( key( src ) -> next( src ) ) )( {
+      ( a, x ) => {
+        a.get( key( x ) ) match {
+          case Some( v ) => a
+          case None => a ++ computeClosure( x, a, next )
+        }
+      }
+    } )
   }
   def next : Src => Set[Src]
-  def close( src : Src ) : Set[Src] = computeClosure( src, new HashSet[Src](), next )
+  def key : Src => Key
+  def close( src : Src ) : Map[Key,Set[Src]] = computeClosure( src, new HashMap[Key,Set[Src]](), next )
 }
 
 trait RHOCTxn {
@@ -48,9 +58,30 @@ case class RHOCTxnRep(
   amt : Float, 
   hash : String, blockHash : String, 
   justification : Set[RHOCTxn] 
-) extends RHOCTxn
+) extends RHOCTxn {
+  override def equals( a : Any ) = {
+    a match {
+      case RHOCTxnRep( _, _, _, `hash`, _, _ ) => true
+      case _ => false
+    }
+  }
+  override def hashCode = ( hash ).##
+}
 
-object RHOCTxnClosure extends Closure[RHOCTxn] {
+trait Adjustment {
+  def txn            : RHOCTxn
+  def cleanBalance   : Float
+  def taintedBalance : Float
+}
+
+class InitialAdjustment( val addr : String, override val taintedBalance : Float ) extends Adjustment {
+  override def txn          = new InitialRHOCTxn( addr )
+  override def cleanBalance = 0
+}
+
+case class ActualAdjustment( txn : RHOCTxn, cleanBalance : Float, taintedBalance : Float ) extends Adjustment
+
+object RHOCTxnClosure extends Closure[String,RHOCTxn] {
   implicit val cs: ContextShift[IO] = IO.contextShift(global)
   implicit val timer: Timer[IO] = IO.timer(global)
 
@@ -96,6 +127,48 @@ object RHOCTxnClosure extends Closure[RHOCTxn] {
   }
 
   override def next = { ( x : RHOCTxn ) => nextTxns( x ) }
+  override def key = _.trgt
+
+  def getBalance( addr : String ) : Float = {
+    throw new Exception( "not implemented yet" )
+  }
+  def getTaint( addr : String ) : Float = {
+    throw new Exception( "not implemented yet" )
+  }
+
+  def nextBalanceAdjustments( adjustment : Adjustment ) : Set[Adjustment] = {
+    val txn = adjustment.txn
+    val lowerCaseAddr = txn.trgt.toLowerCase()
+    val etherscanURI =
+      s"http://api.etherscan.io/api?module=account&action=tokentx&address=$lowerCaseAddr&startblock=0&endblock=999999999&sort=asc&apikey=$apiKey"
+    val etherscanDataStr = httpClient.expect[String]( etherscanURI ).unsafeRunSync
+    val etherscanJson = Ok( etherscanDataStr ).flatMap( _.as[Json] ).unsafeRunSync
+    val etherscanTxnRslt = etherscanJson \\ "result"
+    val etherscanTxnArray = etherscanTxnRslt( 0 ).asArray.getOrElse( throw new Exception( "not an array" ) )
+    val rslt = etherscanTxnArray.foldLeft( new HashSet[Adjustment]() )(
+      { ( acc, e ) => {
+        val trgtAddr = ( e \\ "to" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
+        val blockNumber = ( e \\ "blockNumber" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toInt
+        if ( ( trgtAddr != lowerCaseAddr )  && ( blockNumber <= blockHeight ) ){
+          val srcAddr = ( e \\ "from" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
+          val amt = ( e \\ "value" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toFloat
+          val hash = ( e \\ "hash" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
+          val blockHash = ( e \\ "blockHash" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
+          val clean = getBalance( txn.trgt )
+          val taint = getTaint( txn.src )
+          val newTxn = new RHOCTxnRep( srcAddr, trgtAddr, amt, hash, blockHash, new HashSet[RHOCTxn]() + txn )
+            
+          acc + new ActualAdjustment( newTxn, clean, taint )
+        }
+        else {
+          acc
+        }
+      } }
+    )
+    println( "Next generation:" )
+    rslt.map( { txn => println( txn ) } )
+    rslt
+  }
 
   def closeAddr( addr : String ) = close( new InitialRHOCTxn( addr ) )
 }
