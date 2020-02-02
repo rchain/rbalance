@@ -45,7 +45,12 @@ trait JustifiedClosure[Key, JJ <: Justified[JJ]] extends Closure[Key,JJ] {
 }
 
 // Simple test
-case class Edge[Node]( src : Node, trgt : Node, override val justification : Set[_ <: Edge[Node]] ) extends Justified[Edge[Node]]
+case class Edge[Node]( 
+  src : Node, trgt : Node, 
+  override val justification : Set[_ <: Edge[Node]]
+) extends Justified[Edge[Node]] {
+  override def toString() : String = { s"$src => $trgt" }
+}
 object GraphClosure extends JustifiedClosure[String,Edge[String]] {
   val g1 : Set[Edge[String]] = {
     val a2b = Edge( "a", "b", new HashSet[Edge[String]]() )
