@@ -19,6 +19,16 @@ import org.http4s.implicits._
 import org.http4s.client.blaze._
 import org.http4s.client._
 
+trait Justified[Justification] {
+  def justification : Set[_ <: Justified[Justification]]
+  def paths( ) : Set[List[_ <: Justified[Justification]]] = {
+    justification.size match {
+      case 0 => new HashSet[List[_ <: Justified[Justification]]]() + List( this )
+      case _ => { justification.flatMap( ( w ) => { w.paths().map( _ ++ List( this ) ) } ) }
+    }
+  }
+}
+
 trait Closure[Key,Src] {  
   def computeClosure( src : Src, acc : Map[Key,Set[Src]], next : Src => Set[Src] ) : Map[Key,Set[Src]] = {
     val nextGen = next( src )
@@ -36,23 +46,37 @@ trait Closure[Key,Src] {
   def close( src : Src ) : Map[Key,Set[Src]] = computeClosure( src, new HashMap[Key,Set[Src]](), next )
 }
 
-trait RHOCTxn {
-  def src : String
-  def trgt : String
-  def amt : Float
-  def hash : String
-  def blockHash : String
-  def justification : Set[RHOCTxn]
-  override def toString() : String = {
-    s"$src -$amt-> $trgt"
+trait JustifiedClosure[Key, JJ <: Justified[JJ]] extends Closure[Key,JJ] {
+  def computePaths( src : JJ ) : Map[Key,Set[List[_ <: Justified[JJ]]]] = {
+    close( src ).foldLeft( new HashMap[Key,Set[List[_ <: Justified[JJ]]]]() )(
+      { ( acc, e ) =>
+        {
+          val ( k, v ) = e
+          acc + ( k -> v.flatMap( ( jj ) => { jj.paths( ) } ) )
+        }
+      }
+    )
   }
 }
 
+trait RHOCTxn extends Justified[RHOCTxn] {
+  def src       : String
+  def trgt      : String
+  def amt       : Float
+  def hash      : String
+  def blockHash : String
+
+  override def toString() : String = {
+    s"$src -$amt-> $trgt"
+  }
+  
+}
+
 class InitialRHOCTxn( override val trgt : String ) extends RHOCTxn {
-  override def src : String = ""
-  override def amt : Float = 0
-  override def hash : String = ""
-  override def blockHash : String = ""
+  override def src           : String       = ""
+  override def amt           : Float        = 0
+  override def hash          : String       = ""
+  override def blockHash     : String       = ""
   override def justification : Set[RHOCTxn] = new HashSet[RHOCTxn]()
 }
 case class RHOCTxnRep( 
@@ -75,12 +99,12 @@ trait Adjustment extends RHOCTxn {
   def cleanBalance           : Float
   def taintedBalance         : Float
 
-  override def src           : String = txn.src
-  override def trgt          : String = txn.trgt
-  override def amt           : Float = txn.amt
-  override def hash          : String = txn.hash
-  override def blockHash     : String = txn.blockHash
-  override def justification : Set[RHOCTxn] = txn.justification
+  override def src           : String       = txn.src
+  override def trgt          : String       = txn.trgt
+  override def amt           : Float        = txn.amt
+  override def hash          : String       = txn.hash
+  override def blockHash     : String       = txn.blockHash
+  override def justification                = txn.justification
 }
 
 class InitialAdjustment( val addr : String, override val taintedBalance : Float ) extends Adjustment {
@@ -233,32 +257,27 @@ object RHOCTxnClosure extends Closure[String, RHOCTxn] {
   def closeAddr( addr : String ) = close( new InitialRHOCTxn( addr ) )
 }
 
-object GraphClosure extends Closure[String,( String, String )] {
-  val g1 : Set[( String, String )] = {
-    (new HashSet[( String, String )]() 
-      + ( "a" -> "b" ) + ( "a" -> "c" )
-      + ( "b" -> "c" ) + ( "b" -> "d" )
-      + ( "c" -> "b" ) + ( "c" -> "d" )
-      + ( "d" -> "a" ))
+case class Edge[Node]( src : Node, trgt : Node, override val justification : Set[_ <: Edge[Node]] ) extends Justified[Edge[Node]]
+object GraphClosure extends JustifiedClosure[String,Edge[String]] {
+  val g1 : Set[Edge[String]] = {
+    val a2b = Edge( "a", "b", new HashSet[Edge[String]]() )
+    val a2c = Edge( "a", "c", new HashSet[Edge[String]]() )
+    val b2c = Edge( "b", "c", new HashSet[Edge[String]]() + a2b )
+    val b2d = Edge( "b", "d", new HashSet[Edge[String]]() + a2b )
+    val c2b = Edge( "c", "b", new HashSet[Edge[String]]() + a2c )
+    val c2d = Edge( "c", "d", new HashSet[Edge[String]]() + a2c )
+    val d2a = Edge( "d", "a", new HashSet[Edge[String]]() + b2d + c2d )
+    (new HashSet[Edge[String]]() 
+      + a2b + a2c
+      + b2c + b2d 
+      + c2b + c2d
+      + d2a )
   }
-  def nextEdges( g : Set[( String, String )] )( e : ( String, String ) ) = {
-    val ( _, trgt ) = e
-    g.filter(
-      ( e1 : ( String, String ) ) => {
-        val ( src, _ ) = e1
-        ( src == trgt )
-      }
-    )
+  def nextEdges( g : Set[Edge[String]] )( e : Edge[String] ) = {
+    g.filter( ( e1 : Edge[String] ) => { ( e1.src == e.trgt ) } )
   }
-  override def next = { ( e : ( String, String ) ) => nextEdges( g1 )( e ) }
-  override def key = { 
-    ( e : ( String, String ) ) => {
-      val ( src, trgt ) = e
-      trgt
-    } 
-  }
+  override def next = { ( e : Edge[String] ) => nextEdges( g1 )( e ) }
+  override def key = _.trgt
+  def source( s : String ) = Edge( "", s, new HashSet[Edge[String]]() )
+  def sink( s : String ) = Edge( s, "", new HashSet[Edge[String]]() )
 }
-
-
-
-
