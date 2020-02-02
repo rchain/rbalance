@@ -235,7 +235,11 @@ object RHOCTxnClosure extends Closure[String, RHOCTxn] {
 
 object GraphClosure extends Closure[String,( String, String )] {
   val g1 : Set[( String, String )] = {
-    new HashSet[( String, String )]() + ( "a" -> "b" ) + ( "a" -> "c" ) + ( "b" -> "c" ) + ( "b" -> "d" ) + ( "c" -> "b" ) + ( "c" -> "d" ) + ( "d" -> "a" )
+    (new HashSet[( String, String )]() 
+      + ( "a" -> "b" ) + ( "a" -> "c" )
+      + ( "b" -> "c" ) + ( "b" -> "d" )
+      + ( "c" -> "b" ) + ( "c" -> "d" )
+      + ( "d" -> "a" ))
   }
   def nextEdges( g : Set[( String, String )] )( e : ( String, String ) ) = {
     val ( _, trgt ) = e
