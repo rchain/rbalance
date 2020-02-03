@@ -205,6 +205,21 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     }
   }
 
+  def nextRHOCTxnsD( txn : RHOCTxn ) : Set[RHOCTxn] = {
+    txnData().filter( ( txnD ) => { txnD.src == txn.trgt } ).map(
+      ( t ) => {
+        RHOCTxnRep(
+          t.src,
+          t.trgt,
+          t.amt,
+          t.hash,
+          t.blockHash,
+          (new HashSet[RHOCTxn]() + txn)
+        )
+      }
+    ).toSet
+  }
+
   def getBalance( addr : String ) : Float = {
     throw new Exception( "not implemented yet" )
   }
@@ -242,7 +257,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def nextTxns( x : RHOCTxn ) : Set[RHOCTxn] = {
     x match {
       case adjustment : Adjustment => nextTxnAdjustments( adjustment )
-      case rhocTxn    : RHOCTxn    => nextRHOCTxns( rhocTxn )      
+        //case rhocTxn    : RHOCTxn    => nextRHOCTxns( rhocTxn )
+      case rhocTxn    : RHOCTxn    => nextRHOCTxnsD( rhocTxn )
     }
   }
 
