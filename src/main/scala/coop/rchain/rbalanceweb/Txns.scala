@@ -76,7 +76,8 @@ class InitialAdjustment( val addr : String, override val taintedBalance : Float 
 case class ActualAdjustment( txn : RHOCTxn, cleanBalance : Float, taintedBalance : Float ) extends Adjustment {  
 }
 
-object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] {
+object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] 
+    with InputCSVData {
   implicit val cs    : ContextShift[IO] = IO.contextShift(global)
   implicit val timer : Timer[IO]        = IO.timer(global)
 
@@ -179,6 +180,31 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] {
     rslt
   }
 
+  def loadAndFormatData( source : String, dir : String ) : List[RHOCTxn] = {
+    for( txnArray <- loadData( source, dir ) ) yield {
+      RHOCTxnRep(
+        txnArray(4),
+        txnArray(5),
+        txnArray(6).toFloat,
+        txnArray(0),
+        txnArray(1),
+        new HashSet[RHOCTxn]()
+      )
+    }
+  }
+
+  var txnDataV : Option[List[RHOCTxn]] = None
+  def txnData() : List[RHOCTxn] = {
+    txnDataV match {
+      case None => {
+        val txnD = loadAndFormatData( inputSource, inputDir )
+        txnDataV = Some( txnD )
+        txnD
+      }
+      case Some( txnD ) => txnD
+    }
+  }
+
   def getBalance( addr : String ) : Float = {
     throw new Exception( "not implemented yet" )
   }
@@ -246,11 +272,9 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] {
             v.foldLeft( seed )(
               { 
                 ( acc1, path ) => {
-                  val pathAdj : Adjustment = 
-                    computeAdjustment( acc1.taintedBalance )( path.asInstanceOf[List[_ <: RHOCTxn]] )
                   combine(
                     acc1, 
-                    pathAdj
+                    computeAdjustment( acc1.taintedBalance )( path.asInstanceOf[List[_ <: RHOCTxn]] )
                   )
                 }
               }
