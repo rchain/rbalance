@@ -32,7 +32,7 @@ trait Closure[Key,Src] {
 }
 
 trait JustifiedClosure[Key, JJ <: Justified[JJ]] extends Closure[Key,JJ] {
-  def computePaths( src : JJ ) : Map[Key,Set[List[_ <: Justified[JJ]]]] = {
+  def computePaths( src : JJ ) : Map[Key,Set[List[ _ <: Justified[JJ]]]] = {
     close( src ).foldLeft( new HashMap[Key,Set[List[_ <: Justified[JJ]]]]() )(
       { ( acc, e ) =>
         {

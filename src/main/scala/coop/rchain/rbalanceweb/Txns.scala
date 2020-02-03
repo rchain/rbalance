@@ -73,9 +73,10 @@ class InitialAdjustment( val addr : String, override val taintedBalance : Float 
   override def cleanBalance = 0
 }
 
-case class ActualAdjustment( txn : RHOCTxn, cleanBalance : Float, taintedBalance : Float ) extends Adjustment
+case class ActualAdjustment( txn : RHOCTxn, cleanBalance : Float, taintedBalance : Float ) extends Adjustment {  
+}
 
-object RHOCTxnClosure extends Closure[String, RHOCTxn] {
+object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] {
   implicit val cs    : ContextShift[IO] = IO.contextShift(global)
   implicit val timer : Timer[IO]        = IO.timer(global)
 
@@ -92,6 +93,7 @@ object RHOCTxnClosure extends Closure[String, RHOCTxn] {
   val minBlockHeight : Int              = 7598478
   val maxBlockHeight : Int              = 9371743
   val barcelonaAddr  : String           = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
+  val barcelonaTaint : Float            = 11000000
   val feedback       : Int              = 1
 
   def recordTxn( 
@@ -183,6 +185,12 @@ object RHOCTxnClosure extends Closure[String, RHOCTxn] {
   def getTaint( addr : String ) : Float = {
     throw new Exception( "not implemented yet" )
   }
+  def combine( adj : Adjustment, txn : RHOCTxn ) : ActualAdjustment = {
+    ActualAdjustment( txn, getBalance( txn.trgt ), ( adj.txn.amt / getBalance( txn.src ) ) * adj.taintedBalance )
+  }
+  def combine( adj : Adjustment, adjNext : Adjustment ) : ActualAdjustment = {
+    ActualAdjustment( adjNext.txn, getBalance( adj.txn.trgt ), ( adj.txn.amt / getBalance( adjNext.txn.src ) ) * adj.taintedBalance )
+  }
 
   def nextTxnAdjustments( adjustment : Adjustment ) : Set[RHOCTxn] = {
     val txn = adjustment.txn
@@ -216,6 +224,42 @@ object RHOCTxnClosure extends Closure[String, RHOCTxn] {
   override def key = _.trgt
 
   def closeAddr( addr : String ) = close( new InitialRHOCTxn( addr ) )
+  def computeAdjustment( taint : Float )( path : List[_ <: RHOCTxn] ) : Adjustment = {
+    path match {
+      case Nil => new InitialAdjustment( "", 0 )
+      case txn :: txns => {
+        txns.foldLeft( ActualAdjustment( txn, getBalance( txn.src ), taint ) )(
+          { ( acc, e ) => { combine( acc, e ) } }
+        )
+      }
+    }
+  }
+  def computeAdjustments( addr : String, taint : Float ) : Map[String,Adjustment] = {
+    computePaths( 
+      new InitialAdjustment( addr, taint )
+    ).foldLeft( new HashMap[String,Adjustment]() )(
+      {
+        ( acc, e ) => {
+          val ( k, v ) = e
+          val seed : Adjustment = new InitialAdjustment( "", 0 )
+          val adj : Adjustment =            
+            v.foldLeft( seed )(
+              { 
+                ( acc1, path ) => {
+                  val pathAdj : Adjustment = 
+                    computeAdjustment( acc1.taintedBalance )( path.asInstanceOf[List[_ <: RHOCTxn]] )
+                  combine(
+                    acc1, 
+                    pathAdj
+                  )
+                }
+              }
+            )
+          acc + ( k -> adj )
+        }
+      }
+    )
+  }
 }
 
 
