@@ -251,7 +251,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def loadAndFormatWalletData( source : String, dir : String ) : Map[String,Float] = {
     loadWalletData( source, dir ).foldLeft( new HashMap[String,Float]() )(
       ( acc, walletArray ) => {
-        acc + ( walletArray( 0 ) -> walletArray( 1 ).toFloat )
+        acc + ( walletArray( 0 ).toLowerCase -> walletArray( 1 ).toFloat )
       }
     )
   }
@@ -269,7 +269,10 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   }
 
   def getBalance( addr : String ) : Float = {
-    balances().get( addr ).getOrElse( throw new Exception( "invalid address" ) )
+    balances().get( addr ) match {
+      case Some( balance ) => balance
+      case None => 0
+    }
   }
   def getTaint( addr : String ) : Float = {
     throw new Exception( "not implemented yet" )
