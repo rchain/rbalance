@@ -78,26 +78,7 @@ case class ActualAdjustment( txn : RHOCTxn, cleanBalance : Float, taintedBalance
 
 object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] 
     with InputCSVData {
-  implicit val cs    : ContextShift[IO] = IO.contextShift(global)
-  implicit val timer : Timer[IO]        = IO.timer(global)
-
-  BlazeClientBuilder[IO](global).resource.use { client =>
-    // use `client` here and return an `IO`.
-    // the client will be acquired and shut down
-    // automatically each time the `IO` is run.
-    IO.unit
-  }
-
-  val blockingEC                          = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5))
-  val httpClient       : Client[IO]       = JavaNetClientBuilder[IO](blockingEC).create
-  val apiKey           : String           = "251USXDI6XCV4CQYA6UCQ6Y5JPBR7FPXAC"
-  val apiKey2          : String           = "AHMYX9PI91G4Q6PT772QY31M3668HJTNDR"
-  val rhocContractAddr : String           = "0x168296bb09e24a88805cb9c33356536b980d3fc5"
-  val minBlockHeight   : Int              = 7598478
-  val maxBlockHeight   : Int              = 9371743
-  val barcelonaAddr    : String           = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
-  val barcelonaTaint   : Float            = 11000000
-  val feedback         : Int              = 1
+  import AdjustmentConstants._
 
   def recordTxn( 
     txn       : RHOCTxn, 
@@ -109,39 +90,14 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   ) : RHOCTxn = {
     txn match {
       case adj : Adjustment => {
-        val clean = getBalance( txn.trgt )
-        val taint = getTaint( txn.src )
+        val clean = getBalance( txn.trgt )        
         val newTxn = new RHOCTxnRep( srcAddr, trgtAddr, amt, hash, blockHash, new HashSet[RHOCTxn]() + txn )
+        val taint = getTaint( adj, newTxn )
         new ActualAdjustment( newTxn, clean, taint )
       }
       case irt : RHOCTxn => {
         new RHOCTxnRep( srcAddr, trgtAddr, amt, hash, blockHash, new HashSet[RHOCTxn]() + txn )
       }      
-    }
-  }
-
-  def etherscanTxnArray( addr : String ) : Vector[Json] = {
-    val lowerCaseAddr = addr.toLowerCase()
-    val etherscanURI =
-      s"http://api.etherscan.io/api?module=account&action=tokentx&address=$lowerCaseAddr&startblock=$minBlockHeight&endblock=$maxBlockHeight&sort=asc&apikey=$apiKey"
-    val etherscanDataStr = httpClient.expect[String]( etherscanURI ).unsafeRunSync
-    val etherscanJson = Ok( etherscanDataStr ).flatMap( _.as[Json] ).unsafeRunSync
-    val etherscanTxnRslt = etherscanJson \\ "result"
-    etherscanTxnRslt( 0 ).asArray.getOrElse( throw new Exception( "not an array" ) )
-  }
-
-  def txnRecordData( addr : String, e : Json ) : Option[( String, String, Float, String, String )] = {
-    val trgtAddr = ( e \\ "to" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
-    val blockNumber = ( e \\ "blockNumber" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toInt
-    if ( ( trgtAddr != addr )  && ( blockNumber <= maxBlockHeight ) ){
-      val srcAddr = ( e \\ "from" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
-      val amt = ( e \\ "value" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toFloat
-      val hash = ( e \\ "hash" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
-      val blockHash = ( e \\ "blockHash" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
-      Some( ( srcAddr, trgtAddr, amt, hash, blockHash ) )
-    }
-    else {
-      None
     }
   }
 
@@ -162,11 +118,11 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     }
   }
 
-  def nextRHOCTxns( txn : RHOCTxn ) : Set[RHOCTxn] = {
+  def nextRHOCTxnsFromEtherscan( txn : RHOCTxn ) : Set[RHOCTxn] = {
     val lowerCaseAddr = txn.trgt.toLowerCase()
-    val rslt = etherscanTxnArray( lowerCaseAddr ).foldLeft( new HashSet[RHOCTxn]() )(
+    val rslt = EtherscanAPIAccess.etherscanTxnArray( lowerCaseAddr ).foldLeft( new HashSet[RHOCTxn]() )(
       { ( acc, e ) => {
-        txnRecordData( lowerCaseAddr, e ) match {
+        EtherscanAPIAccess.txnRecordData( lowerCaseAddr, e ) match {
           case Some( ( srcAddr, trgtAddr, amt, hash, blockHash ) ) => {
             acc + recordTxn( txn, srcAddr, trgtAddr, amt, hash, blockHash )
           }
@@ -237,17 +193,6 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     }    
   }
 
-  def getBalanceDataFromEtherscan( addr : String ) = {
-    // Etherscan is not accepting this action!
-    val etherscanURI =
-      s"https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=$rhocContractAddr=$addr&tag=latest&apikey=$apiKey"
-    val etherscanDataStr = httpClient.expect[String]( etherscanURI ).unsafeRunSync
-    val etherscanJson = Ok( etherscanDataStr ).flatMap( _.as[Json] ).unsafeRunSync
-    val etherscanTxnRslt = etherscanJson \\ "result"
-    //etherscanTxnRslt( 0 ).asArray.getOrElse( throw new Exception( "not an array" ) )
-    etherscanTxnRslt
-  }
-
   def loadAndFormatWalletData( source : String, dir : String ) : Map[String,Float] = {
     loadWalletData( source, dir ).foldLeft( new HashMap[String,Float]() )(
       ( acc, walletArray ) => {
@@ -275,22 +220,24 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
       case None => -1
     }
   }
-  def getTaint( addr : String ) : Float = {
-    throw new Exception( "not implemented yet" )
+
+  def getTaint( adj : Adjustment, txn : RHOCTxn ) : Float = {
+    ( adj.txn.amt / getBalance( txn.src ) ) * adj.taintedBalance
   }
+  
   def combine( adj : Adjustment, txn : RHOCTxn ) : ActualAdjustment = {
     ActualAdjustment( txn, getBalance( txn.trgt ), ( adj.txn.amt / getBalance( txn.src ) ) * adj.taintedBalance )
   }
   def combine( adj : Adjustment, adjNext : Adjustment ) : ActualAdjustment = {
-    ActualAdjustment( adjNext.txn, getBalance( adj.txn.trgt ), ( adj.txn.amt / getBalance( adjNext.txn.src ) ) * adj.taintedBalance )
+    ActualAdjustment( adjNext.txn, getBalance( adj.txn.trgt ), getTaint( adj, adjNext.txn ) )
   }
 
-  def nextTxnAdjustments( adjustment : Adjustment ) : Set[RHOCTxn] = {
+  def nextTxnAdjustmentsFromEtherscan( adjustment : Adjustment ) : Set[RHOCTxn] = {
     val txn = adjustment.txn
     val lowerCaseAddr = txn.trgt.toLowerCase()
-    val rslt = etherscanTxnArray( lowerCaseAddr ).foldLeft( new HashSet[RHOCTxn]() )(
+    val rslt = EtherscanAPIAccess.etherscanTxnArray( lowerCaseAddr ).foldLeft( new HashSet[RHOCTxn]() )(
       { ( acc, e ) => {
-        txnRecordData( lowerCaseAddr, e ) match {
+        EtherscanAPIAccess.txnRecordData( lowerCaseAddr, e ) match {
           case Some( ( srcAddr, trgtAddr, amt, hash, blockHash ) ) => {
             acc + recordTxn( txn, srcAddr, trgtAddr, amt, hash, blockHash )
           }
@@ -328,7 +275,6 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def nextTxns( x : RHOCTxn ) : Set[RHOCTxn] = {
     x match {
       case adjustment : Adjustment => nextTxnAdjustmentsD( adjustment )
-        //case rhocTxn    : RHOCTxn    => nextRHOCTxns( rhocTxn )
       case rhocTxn    : RHOCTxn    => nextRHOCTxnsD( rhocTxn )
     }
   }
