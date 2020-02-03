@@ -88,14 +88,16 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     IO.unit
   }
 
-  val blockingEC                        = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5))
-  val httpClient     : Client[IO]       = JavaNetClientBuilder[IO](blockingEC).create
-  val apiKey         : String           = "251USXDI6XCV4CQYA6UCQ6Y5JPBR7FPXAC"
-  val minBlockHeight : Int              = 7598478
-  val maxBlockHeight : Int              = 9371743
-  val barcelonaAddr  : String           = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
-  val barcelonaTaint : Float            = 11000000
-  val feedback       : Int              = 1
+  val blockingEC                          = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5))
+  val httpClient       : Client[IO]       = JavaNetClientBuilder[IO](blockingEC).create
+  val apiKey           : String           = "251USXDI6XCV4CQYA6UCQ6Y5JPBR7FPXAC"
+  val apiKey2          : String           = "AHMYX9PI91G4Q6PT772QY31M3668HJTNDR"
+  val rhocContractAddr : String           = "0x168296bb09e24a88805cb9c33356536b980d3fc5"
+  val minBlockHeight   : Int              = 7598478
+  val maxBlockHeight   : Int              = 9371743
+  val barcelonaAddr    : String           = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
+  val barcelonaTaint   : Float            = 11000000
+  val feedback         : Int              = 1
 
   def recordTxn( 
     txn       : RHOCTxn, 
@@ -180,8 +182,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     rslt
   }
 
-  def loadAndFormatData( source : String, dir : String ) : List[RHOCTxn] = {
-    for( txnArray <- loadData( source, dir ) ) yield {
+  def loadAndFormatTxnData( source : String, dir : String ) : List[RHOCTxn] = {
+    for( txnArray <- loadTxnData( source, dir ) ) yield {
       RHOCTxnRep(
         txnArray(4),
         txnArray(5),
@@ -197,7 +199,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def txnData() : List[RHOCTxn] = {
     txnDataV match {
       case None => {
-        val txnD = loadAndFormatData( inputSource, inputDir )
+        val txnD = loadAndFormatTxnData( txnSource, sourceDir )
         txnDataV = Some( txnD )
         txnD
       }
@@ -220,8 +222,54 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     ).toSet
   }
 
+  var addressListD : Option[List[String]] = None
+  def addressList() : List[String] = {
+    addressListD match {
+      case None => {
+        val addrS = 
+          txnData().foldLeft( new HashSet[String]() )(
+            ( acc, txn ) => { acc + txn.trgt }
+          ).toList
+        addressListD = Some( addrS )
+        addrS
+      }
+      case Some( addrS ) => addrS
+    }    
+  }
+
+  def getBalanceDataFromEtherscan( addr : String ) = {
+    // Etherscan is not accepting this action!
+    val etherscanURI =
+      s"https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress=$rhocContractAddr=$addr&tag=latest&apikey=$apiKey"
+    val etherscanDataStr = httpClient.expect[String]( etherscanURI ).unsafeRunSync
+    val etherscanJson = Ok( etherscanDataStr ).flatMap( _.as[Json] ).unsafeRunSync
+    val etherscanTxnRslt = etherscanJson \\ "result"
+    //etherscanTxnRslt( 0 ).asArray.getOrElse( throw new Exception( "not an array" ) )
+    etherscanTxnRslt
+  }
+
+  def loadAndFormatWalletData( source : String, dir : String ) : Map[String,Float] = {
+    loadWalletData( source, dir ).foldLeft( new HashMap[String,Float]() )(
+      ( acc, walletArray ) => {
+        acc + ( walletArray( 0 ) -> walletArray( 1 ).toFloat )
+      }
+    )
+  }
+
+  var balancesD : Option[Map[String,Float]] = None
+  def balances() : Map[String,Float] = {
+    balancesD match {
+      case None => {
+        var balanceMap = loadAndFormatWalletData( walletSource, sourceDir )
+        balancesD = Some( balanceMap )
+        balanceMap
+      }
+      case Some( balanceMap ) => balanceMap
+    }
+  }
+
   def getBalance( addr : String ) : Float = {
-    throw new Exception( "not implemented yet" )
+    balances().get( addr ).getOrElse( throw new Exception( "invalid address" ) )
   }
   def getTaint( addr : String ) : Float = {
     throw new Exception( "not implemented yet" )
