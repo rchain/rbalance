@@ -7,5 +7,9 @@ object AdjustmentConstants {
   val barcelonaAddr    : String           = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
   val barcelonaTaint   : Float            = 11000000
   val feedback         : Int              = 1
+
+  val adjustmentsFile  : String           = "adjustments.csv"
+  val proofFile        : String           = "proof.csv"
+  val reportingDir     : String           = "src/main/resources"
 }
 

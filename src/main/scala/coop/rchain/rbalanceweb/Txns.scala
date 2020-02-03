@@ -321,7 +321,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     )
   }
 
-  def reportAdjustments( 
+  def reportAdjustments(
     addr : String, taint : Float, 
     adjFileName : String, proofFileName : String, 
     dir : String
@@ -332,11 +332,19 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
     val adjustments = computeAdjustments( addr, taint )
     for( ( k, v ) <- adjustments ) {
-      adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}" )
-      proofWriter.write( s"$k, ${v._2}" )
+      adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}\n" )
+      proofWriter.write( s"$k, ${v._2}\n" )
     }
+    adjustmentsWriter.flush()
+    proofWriter.flush()
     adjustmentsWriter.close()
     proofWriter.close()
+  }
+
+  def reportAdjustments(
+    addr : String, taint : Float    
+  ) : Unit = {
+    reportAdjustments( addr, taint, adjustmentsFile, proofFile, reportingDir )
   }
 
 }
