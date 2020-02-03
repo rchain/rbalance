@@ -1,4 +1,5 @@
 package coop.rchain.rbalance.txns
+import java.io._
 import scala.collection.immutable.Set
 import scala.collection.immutable.HashSet
 import scala.collection.immutable.Map
@@ -293,10 +294,10 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
       }
     }
   }
-  def computeAdjustments( addr : String, taint : Float ) : Map[String,Adjustment] = {
+  def computeAdjustments( addr : String, taint : Float ) : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] = {
     computePaths( 
       new InitialAdjustment( addr, taint )
-    ).foldLeft( new HashMap[String,Adjustment]() )(
+    ).foldLeft( new HashMap[String,( Adjustment, Set[List[_ <: RHOCTxn]] )]() )(
       {
         ( acc, e ) => {
           val ( k, v ) = e
@@ -312,10 +313,30 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                 }
               }
             )
-          acc + ( k -> adj )
+
+          val pair = ( adj, v.asInstanceOf[Set[List[RHOCTxn]]] )
+          acc + ( k -> pair )
         }
       }
     )
+  }
+
+  def reportAdjustments( 
+    addr : String, taint : Float, 
+    adjFileName : String, proofFileName : String, 
+    dir : String
+  ) : Unit = {
+    val adjustmentsFile = new File( s"$dir/$adjFileName" )
+    val proofFile = new File( s"$dir/$proofFileName" )
+    val adjustmentsWriter = new BufferedWriter( new FileWriter( adjFileName ) )
+    val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
+    val adjustments = computeAdjustments( addr, taint )
+    for( ( k, v ) <- adjustments ) {
+      adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}" )
+      proofWriter.write( s"$k, ${v._2}" )
+    }
+    adjustmentsWriter.close()
+    proofWriter.close()
   }
 
 }
