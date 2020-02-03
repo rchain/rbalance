@@ -271,7 +271,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def getBalance( addr : String ) : Float = {
     balances().get( addr ) match {
       case Some( balance ) => balance
-      case None => 0
+        //case None => 0
+      case None => -1
     }
   }
   def getTaint( addr : String ) : Float = {
@@ -305,9 +306,28 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     rslt
   }
 
+  def nextTxnAdjustmentsD( adj : Adjustment ) : Set[RHOCTxn] = {
+    txnData().filter( ( txnD ) => { txnD.src == adj.trgt } ).map(
+      ( t ) => {
+        ActualAdjustment(
+          RHOCTxnRep(
+            t.src,
+            t.trgt,
+            t.amt,
+            t.hash,
+            t.blockHash,
+            ( new HashSet[RHOCTxn]() + adj.txn )
+          ),
+          getBalance( t.trgt ),
+          ( t.amt / getBalance( adj.src ) ) * adj.taintedBalance          
+        )
+      }
+    ).toSet
+  }
+
   def nextTxns( x : RHOCTxn ) : Set[RHOCTxn] = {
     x match {
-      case adjustment : Adjustment => nextTxnAdjustments( adjustment )
+      case adjustment : Adjustment => nextTxnAdjustmentsD( adjustment )
         //case rhocTxn    : RHOCTxn    => nextRHOCTxns( rhocTxn )
       case rhocTxn    : RHOCTxn    => nextRHOCTxnsD( rhocTxn )
     }
@@ -351,6 +371,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
       }
     )
   }
+
 }
 
 
