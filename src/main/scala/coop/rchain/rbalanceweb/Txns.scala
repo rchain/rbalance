@@ -226,7 +226,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   }
   
   def combine( adj : Adjustment, txn : RHOCTxn ) : ActualAdjustment = {
-    ActualAdjustment( txn, getBalance( txn.trgt ), ( adj.txn.amt / getBalance( txn.src ) ) * adj.taintedBalance )
+    ActualAdjustment( txn, getBalance( txn.trgt ), getTaint( adj, txn ) )
   }
   def combine( adj : Adjustment, adjNext : Adjustment ) : ActualAdjustment = {
     ActualAdjustment( adjNext.txn, getBalance( adj.txn.trgt ), getTaint( adj, adjNext.txn ) )
