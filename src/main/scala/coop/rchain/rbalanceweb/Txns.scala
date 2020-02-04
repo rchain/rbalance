@@ -34,9 +34,8 @@ trait RHOCTxn extends Justified[RHOCTxn] {
   
 }
 
-class InitialRHOCTxn( override val trgt : String ) extends RHOCTxn {
-  override def src           : String       = "stop"
-  override def amt           : Float        = 1
+class InitialRHOCTxn( override val src : String, override val trgt : String, override val amt : Float ) extends RHOCTxn {
+//  override def amt           : Float        = 1
   override def hash          : String       = ""
   override def blockHash     : String       = ""
   override def justification : Set[RHOCTxn] = new HashSet[RHOCTxn]()
@@ -69,8 +68,10 @@ trait Adjustment extends RHOCTxn {
   override def justification                = txn.justification
 }
 
-class InitialAdjustment( val addr : String, override val taintedBalance : Float ) extends Adjustment {
-  override def txn          = new InitialRHOCTxn( addr )
+class InitialAdjustment( 
+  val taintAddr : String, val addr : String, override val taintedBalance : Float, override val amt : Float
+) extends Adjustment {
+  override def txn          = new InitialRHOCTxn( taintAddr, addr, amt )
   override def cleanBalance = 0
 }
 
@@ -206,11 +207,43 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def balances() : Map[String,Float] = {
     balancesD match {
       case None => {
-        var balanceMap = loadAndFormatWalletData( walletSource, sourceDir )
+        val balanceMap = loadAndFormatWalletData( walletSource, sourceDir )
         balancesD = Some( balanceMap )
         balanceMap
       }
       case Some( balanceMap ) => balanceMap
+    }
+  }
+
+  var taintMapD : Option[Map[String,Set[_ <: RHOCTxn]]] = None
+  def theTaintMap() : Map[String,Set[_ <: RHOCTxn]] = {
+    taintMapD match {
+      case None => {
+        val tMD = 
+          close( 
+            new InitialRHOCTxn( 
+              AdjustmentConstants.barcelonaLabel, 
+              AdjustmentConstants.barcelonaAddr.toLowerCase, 
+              AdjustmentConstants.barcelonaTaint
+            )
+          )
+        taintMapD = Some( tMD )
+        tMD
+      }
+      case Some( tMD ) => { tMD }
+    }
+  }
+
+  var txnSetD : Option[Set[_ <: RHOCTxn]] = None
+  def theTxnSet() : Set[_ <: RHOCTxn] = {
+    txnSetD match {
+      case None => {
+        val txnSet : Set[_ <: RHOCTxn] = 
+          txnSetFromClosure( theTaintMap )
+        txnSetD = Some( txnSet )
+        txnSet
+      }
+      case Some( tsD ) => { tsD }
     }
   }
 
@@ -222,16 +255,113 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     }
   }
 
+  def getSrcPreBalance( txn : RHOCTxn ) : Float = {
+    txn match {
+      case iTxn : InitialRHOCTxn => AdjustmentConstants.barcelonaTaint
+      case rTxn : RHOCTxnRep => {
+        txn.justification.toList match {
+            case Nil => 1
+            case jTxns => {
+              val seed : Float = 0
+              jTxns.foldLeft( seed )(
+                ( acc, jT ) => { acc + jT.asInstanceOf[RHOCTxn].amt }
+              )
+            }
+          }
+      }
+    }
+  }
+
+  def getSrcPostBalance( txn : RHOCTxn ) : Float = {
+    val initBal = getSrcPreBalance( txn )
+    val debit =
+      theTaintMap.get( txn.src ) match {
+        case None => 0
+        case Some( txns ) => {
+          txns.toList match {
+            case Nil => 0
+            case txnL =>
+              val seed : Float = 0
+              txnL.foldLeft( seed )(
+                ( acc, t ) => { acc + t.asInstanceOf[RHOCTxn].amt }
+              )
+          }
+        }
+      }
+    initBal - debit
+  }
+
+  def getTrgtPreBalance( txn : RHOCTxn ) : Float = {
+    txn match {
+      case iTxn : InitialRHOCTxn => AdjustmentConstants.barcelonaTaint
+      case rTxn : RHOCTxnRep => {
+        theTxnSet.filter( ( t ) => t.trgt == txn.trgt ).toList match {
+            case Nil => 1
+            case jTxns => {
+              val seed : Float = 0
+              jTxns.foldLeft( seed )(
+                ( acc, jT ) => { acc + jT.asInstanceOf[RHOCTxn].amt }
+              )
+            }
+          }
+      }
+    }
+  }
+
+  def getTrgtPostBalance( txn : RHOCTxn ) : Float = {
+    val initBal = getTrgtPreBalance( txn )
+    val debit =
+      theTaintMap.get( txn.trgt ) match {
+        case None => 0
+        case Some( txns ) => {
+          txns.toList match {
+            case Nil => 0
+            case txnL =>
+              val seed : Float = 0
+              txnL.foldLeft( seed )(
+                ( acc, t ) => { acc + t.asInstanceOf[RHOCTxn].amt }
+              )
+          }
+        }
+      }
+    initBal - debit
+  }
+
   def getBalance( txn : RHOCTxn ) : Float = {
     balances().get( txn.src ) match { // BUG: we need to get balance at the blockHeight of txn!!!
-      case Some( balance ) => balance
+      case Some( balance ) => {
+        if ( balance < txn.amt ) {
+          txn.justification.toList match {
+            case Nil => 1
+            case jTxns => {
+              val seed : Float = 0
+              jTxns.foldLeft( seed )(
+                ( acc, jT ) => { acc + jT.asInstanceOf[RHOCTxn].amt }
+              )
+            }
+          }
+        }
+        else { balance }
+      }
         //case None => 0
-      case None => 1
+      case None => {
+        txn.justification.toList match {
+          case Nil => 1
+          case jTxns => {
+            val seed : Float = 0
+            jTxns.foldLeft( seed )( 
+              ( acc, jT ) => { acc + jT.asInstanceOf[RHOCTxn].amt } 
+            )
+          }
+        }
+      }
     }
   }
 
   def getTaint( adj : Adjustment, txn : RHOCTxn ) : Float = {
-    ( adj.txn.amt / getBalance( txn.src ) ) * adj.taintedBalance
+    val txnBal = getBalance( txn )
+    val normBal = if ( txnBal == 0.0 ) { 1 } else { txnBal }
+    ( adj.txn.amt / normBal ) * adj.taintedBalance
   }
   
   def combine( adj : Adjustment, txn : RHOCTxn ) : ActualAdjustment = {
@@ -265,6 +395,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def nextTxnAdjustmentsD( adj : Adjustment ) : Set[RHOCTxn] = {
     txnData().filter( ( txnD ) => { txnD.src == adj.trgt } ).map(
       ( t ) => {
+        val txnBal = getBalance( adj.src )
+        val normBal = if ( txnBal == 0.0 ) { 1 } else { txnBal }
         ActualAdjustment(
           RHOCTxnRep(
             t.src,
@@ -275,7 +407,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
             ( new HashSet[RHOCTxn]() + adj.txn )
           ),
           getBalance( t.trgt ),
-          ( t.amt / getBalance( adj.src ) ) * adj.taintedBalance          
+          ( t.amt / normBal ) * adj.taintedBalance          
         )
       }
     ).toSet
@@ -291,12 +423,12 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   override def next = nextTxns
   override def key = _.trgt
 
-  def closeAddr( addr : String ) = close( new InitialRHOCTxn( addr ) )
+  def closeAddr( taintLabel : String, addr : String, taint : Float ) = close( new InitialRHOCTxn( taintLabel, addr, taint ) )
 
   // Forward calculation
-  def computeAdjustment( taint : Float )( path : List[_ <: RHOCTxn] ) : Adjustment = {
+  def computeAdjustment( taintLabel : String, taintAddr : String, taint : Float )( path : List[_ <: RHOCTxn] ) : Adjustment = {
     path match {
-      case Nil => new InitialAdjustment( "", 0 )
+      case Nil => new InitialAdjustment( taintLabel, taintAddr, 0, taint )
       case txn :: txns => {
         txns.foldLeft( ActualAdjustment( txn, getBalance( txn.src ), taint ) )(
           { ( acc, e ) => { combine( acc, e ) } }
@@ -304,21 +436,21 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
       }
     }
   }
-  def computeAdjustments( addr : String, taint : Float ) : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] = {
+  def computeAdjustments( taintLabel : String, addr : String, taint : Float ) : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] = {
     computePaths( 
-      new InitialAdjustment( addr, taint )
+      new InitialAdjustment( taintLabel, addr, taint, taint )
     ).foldLeft( new HashMap[String,( Adjustment, Set[List[_ <: RHOCTxn]] )]() )(
       {
         ( acc, e ) => {
           val ( k, v ) = e
-          val seed : Adjustment = new InitialAdjustment( "", 0 )
+          val seed : Adjustment = new InitialAdjustment( taintLabel, addr, 0, taint )
           val adj : Adjustment =            
             v.foldLeft( seed )(
               { 
                 ( acc1, path ) => {
                   combine(
                     acc1, 
-                    computeAdjustment( acc1.taintedBalance )( path.asInstanceOf[List[_ <: RHOCTxn]] )
+                    computeAdjustment( taintLabel, addr, acc1.taintedBalance )( path.asInstanceOf[List[_ <: RHOCTxn]] )
                   )
                 }
               }
@@ -339,14 +471,14 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def computeTaint( taintMap : Map[String,Set[_ <: RHOCTxn]], taintAcc : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] )(
     txn : RHOCTxn, taintSrc : Float
   ) : Option[(Float, Set[List[_ <: RHOCTxn]])]  = {
-    //println( s"computing taint for $txn" )
+    println( s"computing taint for ${txn.trgt}" )
     taintAcc.get( txn.trgt ) match {
       case None => {
         val emptySet : Set[List[_ <: RHOCTxn]] = new HashSet[List[RHOCTxn]]()
         txn.justification.toList match {
           case Nil => {
             val tpp = ( taintSrc, new HashSet[List[RHOCTxn]]() )
-            //println( s"Entry in taint map: $tpp" )
+            println( s"Entry in taint map: $tpp" )
             Some( tpp )
           }
           case txns => {            
@@ -363,23 +495,25 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                   ( acc, tJ ) => {
                     val ( txnJ, amt, bal ) = tJ match {
                       case iTxn : InitialRHOCTxn => {
-                        ( iTxn, taintSrc, taintSrc )
+                        //println( s"case initial txn: ${iTxn}" )
+                        ( iTxn, txn.amt, taintSrc )
                       }
                       case rTxn : RHOCTxnRep => {
+                        //println( s"case intermediate txn: ${rTxn}" )
                         val txnBal = getBalance( rTxn )
-                        val normBal =
-                          if ( txnBal == 0.0 ) {
-                            1
-                          }
-                          else {
-                            txnBal
-                          }
-                      ( rTxn, rTxn.amt, normBal )
+                        val normBal = if ( txnBal == 0.0 ) { 1 } else { txnBal }
+                      ( rTxn, txn.amt, normBal )
                       }
                     }
                     computeTaint( taintMap, taintAcc )( txnJ, taintSrc ) match {
                       case Some( ( taintJ, proof ) ) => {
-                        val taint = if ( bal == 0.0 ) { bal } else { ( amt * taintJ )/bal }
+                        val taint = ( amt * taintJ )/bal
+                        println( s"${txn} amt is ${txn.amt}" )
+                        println( s"${txn} bal is ${getBalance(txn)}" )
+                        println( s"${txnJ} amt is ${txnJ.amt}" )
+                        println( s"${txnJ} bal is ${bal}" )
+                        println( s"${txnJ} taint is ${taintJ}" )
+                        println( s"${txn} taint is ${taint}" )
                         val accProof : Set[List[_ <: RHOCTxn]] = acc._2
                         val proofExt : Set[List[_ <: RHOCTxn]] =
                           accProof.toList match {
@@ -402,7 +536,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                   }
                 }
               )
-            //println( s"taint proof pair: $taintProofPair" )
+            println( s"${txn.trgt}: taint proof pair: $taintProofPair" )
             Some( taintProofPair )
           }
         }        
@@ -438,7 +572,11 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                   }
                 }
               )
-            val adj = new ActualAdjustment( txn, getBalance( txn.trgt ), pathSum )
+
+            val txnBal = getBalance( txn.trgt )
+            val normBal = if ( txnBal == 0.0 ) { 1 } else { txnBal }
+
+            val adj = new ActualAdjustment( txn, normBal, pathSum )
 
             acc + ( txn.src -> ( adj, proofs ) )
           }
@@ -449,7 +587,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   }
 
   def reportAdjustments(
-    addr : String, taint : Float, 
+    taintLabel : String, addr : String, taint : Float, 
     adjFileName : String, proofFileName : String, 
     dir : String
   ) : Unit = {
@@ -457,7 +595,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     val proofFile = new File( s"$dir/$proofFileName" )
     val adjustmentsWriter = new BufferedWriter( new FileWriter( adjFileName ) )
     val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
-    val adjustments = computeAdjustments( addr, taint )
+    val adjustments = computeAdjustments( taintLabel, addr, taint )
     for( ( k, v ) <- adjustments ) {
       adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}\n" )
       proofWriter.write( s"$k, ${v._2}\n" )
@@ -469,21 +607,21 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   }
 
   def reportAdjustments(
-    addr : String, taint : Float    
+    taintLabel : String, addr : String, taint : Float
   ) : Unit = {
-    reportAdjustments( addr, taint, adjustmentsFile, proofFile, reportingDir )
+    reportAdjustments( taintLabel, addr, taint, adjustmentsFile, proofFile, reportingDir )
   }
 
   def reportTaints(
-    addr : String, taint : Float, 
+    taintLabel : String, addr : String, taint : Float,
     adjFileName : String, proofFileName : String, 
     dir : String
   ) : Unit = {
-    val adjustmentsFile = new File( s"$dir/$adjFileName" )
-    val proofFile = new File( s"$dir/$proofFileName" )
+    val adjustmentsFile = new File( s"${dir}/${adjFileName}" )
+    val proofFile = new File( s"${dir}/${proofFileName}" )
     val adjustmentsWriter = new BufferedWriter( new FileWriter( adjFileName ) )
     val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
-    val taintMap = close( new InitialRHOCTxn( addr ) )
+    val taintMap = close( new InitialRHOCTxn( taintLabel, addr, taint ) )
     val adjustments = computeTaints( taintMap )( taint )
     for( ( k, v ) <- adjustments ) {
       adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}\n" )
@@ -496,9 +634,9 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   }
 
   def reportTaints(
-    addr : String, taint : Float    
+    taintLabel : String, addr : String, taint : Float
   ) : Unit = {
-    reportTaints( addr.toLowerCase, taint, adjustmentsFile, proofFile, reportingDir )
+    reportTaints( taintLabel, addr.toLowerCase, taint, adjustmentsFile, proofFile, reportingDir )
   }
 
 }
