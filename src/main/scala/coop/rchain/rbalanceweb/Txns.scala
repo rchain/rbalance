@@ -36,7 +36,7 @@ trait RHOCTxn extends Justified[RHOCTxn] {
 
 class InitialRHOCTxn( override val trgt : String ) extends RHOCTxn {
   override def src           : String       = ""
-  override def amt           : Float        = 0
+  override def amt           : Float        = 1
   override def hash          : String       = ""
   override def blockHash     : String       = ""
   override def justification : Set[RHOCTxn] = new HashSet[RHOCTxn]()
@@ -218,7 +218,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     balances().get( addr ) match {
       case Some( balance ) => balance
         //case None => 0
-      case None => -1
+      case None => 1
     }
   }
 
@@ -226,7 +226,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     balances().get( txn.src ) match { // BUG: we need to get balance at the blockHeight of txn!!!
       case Some( balance ) => balance
         //case None => 0
-      case None => -1
+      case None => 1
     }
   }
 
@@ -292,6 +292,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   override def key = _.trgt
 
   def closeAddr( addr : String ) = close( new InitialRHOCTxn( addr ) )
+
+  // Forward calculation
   def computeAdjustment( taint : Float )( path : List[_ <: RHOCTxn] ) : Adjustment = {
     path match {
       case Nil => new InitialAdjustment( "", 0 )
@@ -329,43 +331,67 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     )
   }
 
-  def computeTaint( taintMap : Map[String,Set[_ <: RHOCTxn]] )(
-    txn : RHOCTxn, taintSrc : Float
-  ) : Option[(Float, Set[List[_ <: RHOCTxn]])]  = {
-    taintMap.get( txn.trgt ) match {
-      case None => None
-      case Some( txns ) => {
-        txns.toList match {
-          case ftxn :: rtxns => {
-            val emptySet : Set[List[_ <: RHOCTxn]] = new HashSet[List[RHOCTxn]]()
-            val seed : ( Float, Set[List[_ <: RHOCTxn]] )  = ( 0, emptySet )
-            val taintProofPair =
-              txns.foldLeft( seed )(
-                ( acc : ( Float, Set[List[_ <: RHOCTxn]] ), txnJ : RHOCTxn ) => {
-                  computeTaint( taintMap )( txnJ, taintSrc ) match {
-                    case Some( ( taintJ, proof ) ) => {
-                      val taint = ( txnJ.amt * taintJ )/getBalance( txnJ )
-                      val accProof : Set[List[_ <: RHOCTxn]] = acc._2
-                      val proofExt : Set[List[_ <: RHOCTxn]] = 
-                        accProof.flatMap( ( prefix ) => proof.map( ( path ) => prefix ++ path ) )
-                      ( acc._1 + taint, proofExt )
-                    }
-                    case None => { ( 0, emptySet ) }
-                  }
-              }
-              )
-            Some( taintProofPair )
-          }
-          case Nil => {
-            Some( ( taintSrc, new HashSet[List[RHOCTxn]]() ) )
-          }
-        }
-      }
-    }
-  }
-
   def txnSetFromClosure( taintMap : Map[String,Set[_ <: RHOCTxn]] ) : Set[_ <: RHOCTxn] = {
     taintMap.values.fold( new HashSet[RHOCTxn]() )( ( acc, s ) => acc ++ s )
+  }    
+
+  // Backward calculation
+  def computeTaint( taintMap : Map[String,Set[_ <: RHOCTxn]], taintAcc : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] )(
+    txn : RHOCTxn, taintSrc : Float
+  ) : Option[(Float, Set[List[_ <: RHOCTxn]])]  = {
+    //println( s"computing taint for $txn" )
+    taintAcc.get( txn.trgt ) match {
+      case None => {
+        val emptySet : Set[List[_ <: RHOCTxn]] = new HashSet[List[RHOCTxn]]()
+        txn.justification.toList match {
+          case Nil => {
+            val tpp = ( taintSrc, new HashSet[List[RHOCTxn]]() )
+            //println( s"Entry in taint map: $tpp" )
+            Some( tpp )
+          }
+          case txns => {
+            val initProofs : Set[List[_ <: RHOCTxn]] = 
+              txn.justification.map( 
+                ( t ) => t match { case rT : RHOCTxn => List( rT ) }
+              )
+            val seed : ( Float, Set[List[_ <: RHOCTxn]])  = 
+              ( 0.asInstanceOf[Float], initProofs )
+            val taintProofPair =
+              txns.foldLeft( seed )(
+                {
+                  ( acc, tJ ) => {
+                    val ( txnJ, amt, bal ) = tJ match {
+                      case iTxn : InitialRHOCTxn => {
+                        ( iTxn, taintSrc, taintSrc )
+                      }
+                      case rTxn : RHOCTxnRep => {
+                        val txnBal = getBalance( rTxn ) match {
+                          case 0 => 1
+                          case b => b
+                        }
+                      ( rTxn, rTxn.amt, txnBal )
+                      }
+                    }
+                    computeTaint( taintMap, taintAcc )( txnJ, taintSrc ) match {
+                      case Some( ( taintJ, proof ) ) => {
+                        val taint = ( amt * taintJ )/bal
+                        val accProof : Set[List[_ <: RHOCTxn]] = acc._2
+                        val proofExt : Set[List[_ <: RHOCTxn]] =
+                          accProof.flatMap( ( prefix ) => proof.map( ( path ) => prefix ++ path ) )
+                        ( acc._1 + taint, proofExt )
+                      }
+                      case None => { ( 0, emptySet ) }
+                    }
+                  }
+                }
+              )
+            //println( s"taint proof pair: $taintProofPair" )
+            Some( taintProofPair )
+          }
+        }        
+      }
+      case Some( ( adj, proofs ) ) => { Some( ( adj.taintedBalance, proofs ) ) }
+    }
   }
 
   def computeTaints( taintMap : Map[String,Set[_ <: RHOCTxn]] )( 
@@ -373,28 +399,34 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   ) : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] = {
     val emptySet : Set[List[_ <: RHOCTxn]] = new HashSet[List[RHOCTxn]]()
     val txnSet : Set[_ <: RHOCTxn] = txnSetFromClosure( taintMap )
-      
+
+
     txnSet.foldLeft( new HashMap[String,( Adjustment, Set[List[_ <: RHOCTxn]] )]() )(
       ( acc, txn ) => {
-        val pathContributions =
-          txn.justification.toList.map(
-            { ( txnJ ) => computeTaint( taintMap )( txnJ.asInstanceOf[RHOCTxn], taintSrc ) }
-          )
-        val pathSumSeed : (Float,Set[List[_ <: RHOCTxn]]) = ( 0, new HashSet[List[_ <: RHOCTxn]] )
-        val ( pathSum, proofs ) =
-          pathContributions.foldLeft( pathSumSeed )(
-            ( pathAcc, pathC ) => {
-              pathC match {
-                case Some( ( pathCTaint, pathCProof ) ) => {
-                  ( pathAcc._1 + pathCTaint, pathAcc._2 ++ pathCProof )
+        acc.get( txn.trgt ) match {
+          case None => {
+            val pathContributions =
+              txn.justification.toList.map(
+                { ( txnJ ) => computeTaint( taintMap, acc )( txnJ.asInstanceOf[RHOCTxn], taintSrc ) }
+              )
+            val pathSumSeed : (Float,Set[List[_ <: RHOCTxn]]) = ( 0, new HashSet[List[_ <: RHOCTxn]] )
+            val ( pathSum, proofs ) =
+              pathContributions.foldLeft( pathSumSeed )(
+                ( pathAcc, pathC ) => {
+                  pathC match {
+                    case Some( ( pathCTaint, pathCProof ) ) => {
+                      ( pathAcc._1 + pathCTaint, pathAcc._2 ++ pathCProof )
+                    }
+                    case None => { ( 0, emptySet ) }
+                  }
                 }
-                case None => { ( 0, emptySet ) }
-              }
-            }
-          )
-        val adj = new ActualAdjustment( txn, getBalance( txn.trgt ), pathSum )
+              )
+            val adj = new ActualAdjustment( txn, getBalance( txn.trgt ), pathSum )
 
-        acc + ( txn.src -> ( adj, proofs ) )
+            acc + ( txn.src -> ( adj, proofs ) )
+          }
+          case Some( ( adj, proofs ) ) => acc
+        }
       }
     )
   }
@@ -423,6 +455,33 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     addr : String, taint : Float    
   ) : Unit = {
     reportAdjustments( addr, taint, adjustmentsFile, proofFile, reportingDir )
+  }
+
+  def reportTaints(
+    addr : String, taint : Float, 
+    adjFileName : String, proofFileName : String, 
+    dir : String
+  ) : Unit = {
+    val adjustmentsFile = new File( s"$dir/$adjFileName" )
+    val proofFile = new File( s"$dir/$proofFileName" )
+    val adjustmentsWriter = new BufferedWriter( new FileWriter( adjFileName ) )
+    val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
+    val taintMap = close( new InitialRHOCTxn( addr ) )
+    val adjustments = computeTaints( taintMap )( taint )
+    for( ( k, v ) <- adjustments ) {
+      adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}\n" )
+      proofWriter.write( s"$k, ${v._2}\n" )
+    }
+    adjustmentsWriter.flush()
+    proofWriter.flush()
+    adjustmentsWriter.close()
+    proofWriter.close()
+  }
+
+  def reportTaints(
+    addr : String, taint : Float    
+  ) : Unit = {
+    reportTaints( addr.toLowerCase, taint, adjustmentsFile, proofFile, reportingDir )
   }
 
 }
