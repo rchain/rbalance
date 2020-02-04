@@ -35,7 +35,7 @@ trait RHOCTxn extends Justified[RHOCTxn] {
 }
 
 class InitialRHOCTxn( override val trgt : String ) extends RHOCTxn {
-  override def src           : String       = ""
+  override def src           : String       = "stop"
   override def amt           : Float        = 1
   override def hash          : String       = ""
   override def blockHash     : String       = ""
@@ -349,8 +349,9 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
             //println( s"Entry in taint map: $tpp" )
             Some( tpp )
           }
-          case txns => {
-            val initProofs : Set[List[_ <: RHOCTxn]] = 
+          case txns => {            
+            val initProofs : Set[List[_ <: RHOCTxn]] =
+              // Scala type checker madness!!!
               txn.justification.map( 
                 ( t ) => t match { case rT : RHOCTxn => List( rT ) }
               )
@@ -365,19 +366,35 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                         ( iTxn, taintSrc, taintSrc )
                       }
                       case rTxn : RHOCTxnRep => {
-                        val txnBal = getBalance( rTxn ) match {
-                          case 0 => 1
-                          case b => b
-                        }
-                      ( rTxn, rTxn.amt, txnBal )
+                        val txnBal = getBalance( rTxn )
+                        val normBal =
+                          if ( txnBal == 0.0 ) {
+                            1
+                          }
+                          else {
+                            txnBal
+                          }
+                      ( rTxn, rTxn.amt, normBal )
                       }
                     }
                     computeTaint( taintMap, taintAcc )( txnJ, taintSrc ) match {
                       case Some( ( taintJ, proof ) ) => {
-                        val taint = ( amt * taintJ )/bal
+                        val taint = if ( bal == 0.0 ) { bal } else { ( amt * taintJ )/bal }
                         val accProof : Set[List[_ <: RHOCTxn]] = acc._2
                         val proofExt : Set[List[_ <: RHOCTxn]] =
-                          accProof.flatMap( ( prefix ) => proof.map( ( path ) => prefix ++ path ) )
+                          accProof.toList match {
+                            case Nil => proof
+                            case _ => {
+                              accProof.flatMap( 
+                                ( prefix ) => {
+                                  proof.toList match {
+                                    case Nil => { emptySet + prefix }
+                                    case _ => proof.map( ( path ) => prefix ++ path )
+                                  }
+                                }
+                              )
+                            }
+                          }
                         ( acc._1 + taint, proofExt )
                       }
                       case None => { ( 0, emptySet ) }
@@ -470,7 +487,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     val adjustments = computeTaints( taintMap )( taint )
     for( ( k, v ) <- adjustments ) {
       adjustmentsWriter.write( s"$k, ${v._1.taintedBalance}\n" )
-      proofWriter.write( s"$k, ${v._2}\n" )
+      proofWriter.write( s"$k, ${v._2.map( _.map( _.hash ) )}\n" )
     }
     adjustmentsWriter.flush()
     proofWriter.flush()
