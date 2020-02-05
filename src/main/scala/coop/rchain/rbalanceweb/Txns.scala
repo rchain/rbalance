@@ -258,21 +258,33 @@ object RHOCTxnGraphClosure
     adjFileName : String, proofFileName : String,
     dir : String
   ) : Unit = {
-    val adjustmentsFile = new File( s"${dir}/${adjFileName}" )
-    val proofFile = new File( s"${dir}/${proofFileName}" )
+    val adjFName          = s"${dir}/${adjFileName}"
+    val pfFName           = s"${dir}/${proofFileName}"
+
+    // proofs were being written to adjustment file... lol!
+    val adjustmentsFile   = new File( adjFName )
     val adjustmentsWriter = new BufferedWriter( new FileWriter( adjustmentsFile ) )
-    val proofWriter = new BufferedWriter( new FileWriter( proofFile ) )
+    
     for( ( k, v ) <- adjustmentsMap ) {
       val ( balance, adjustment, proof ) = v
       if ( adjustment != 0 ) {
         println( s"${k} -> ${adjustment}" )
-        adjustmentsWriter.write( s"$k, ${balance}, ${adjustment}\n" )
-        proofWriter.write( s"$k, ${proof}\n" )
+        adjustmentsWriter.write( s"$k, ${balance}, ${adjustment}\n" )        
       }      
     }
 
     adjustmentsWriter.flush()
     adjustmentsWriter.close()
+
+    val proofFile         = new File( pfFName )
+    val proofWriter       = new BufferedWriter( new FileWriter( proofFile ) )
+    for( ( k, v ) <- adjustmentsMap ) {
+      val ( balance, adjustment, proof ) = v
+      if ( adjustment != 0 ) {
+        println( s"${k} -> ${adjustment}" )
+        proofWriter.write( s"$k, ${proof}\n" )
+      }      
+    }
 
     proofWriter.flush()
     proofWriter.close()
@@ -282,8 +294,8 @@ object RHOCTxnGraphClosure
     reportAdjustmentsMap( adjustmentsMap, adjustmentsFile, proofFile, reportingDir )
   }
 
-  def annotateFileName( fName : String, annotation : String ) = {
-    val fNameComponents = adjustmentsFile.split( '.' )
+  def annotateFileName( fNameStr : String, annotation : String ) = {
+    val fNameComponents = fNameStr.split( '.' )
     val fName = fNameComponents( 0 )
     val fExt = fNameComponents( 1 )
     s"${fName}${annotation}.${fExt}"
@@ -311,12 +323,13 @@ object RHOCTxnGraphClosure
     val BarcelonaAdjustments = getClique( barcelonaEdge )
 
     def reportAdjustments( ) : Unit = {
-      val adjFName = annotateFileName( adjustmentsFile, "Barcelona" )
-      val pfFName = annotateFileName( proofFile, "Barcelona" )
+      val adjFName = annotateFileName( AdjustmentConstants.adjustmentsFile, "Barcelona" )
+      val pfFName = annotateFileName( AdjustmentConstants.proofFile, "Barcelona" )
+
       reportAdjustmentsMap(
         adjustmentsMap( BarcelonaAdjustments ),
-        s"${adjFName}",
-        s"${pfFName}",
+        adjFName,
+        pfFName,
         reportingDir
       )
     }
@@ -335,8 +348,8 @@ object RHOCTxnGraphClosure
       val pfFName = annotateFileName( proofFile, "Pithia" )
       reportAdjustmentsMap(
         adjustmentsMap( PithiaAdjustments ),
-        s"${adjFName}",
-        s"${pfFName}",
+        adjFName,
+        pfFName,
         reportingDir
       )
     }
