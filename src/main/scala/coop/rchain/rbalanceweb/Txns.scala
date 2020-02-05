@@ -862,7 +862,7 @@ object RHOCTxnGraphClosure
     )
   }
 
-  def reportAdjustments(
+  def reportAdjustmentsMap(
     adjustmentsMap : Map[String,( Float, Float, Set[List[RHOCTxnEdge]] )],
     adjFileName : String, proofFileName : String,
     dir : String
@@ -883,7 +883,7 @@ object RHOCTxnGraphClosure
   }
 
   def reportAdjustmentsMap( adjustmentsMap : Map[String,( Float, Float, Set[List[RHOCTxnEdge]] )] ) : Unit = {
-    reportAdjustments( adjustmentsMap, adjustmentsFile, proofFile, reportingDir )
+    reportAdjustmentsMap( adjustmentsMap, adjustmentsFile, proofFile, reportingDir )
   }
 
   val BarcelonaWeights = getClique( barcelonaEdge )
@@ -895,7 +895,12 @@ object RHOCTxnGraphClosure
     val BarcelonaAdjustments = getClique( barcelonaEdge )
 
     def reportAdjustments( ) : Unit = {
-      reportAdjustmentsMap( adjustmentsMap( BarcelonaAdjustments ) )
+      reportAdjustmentsMap( 
+        adjustmentsMap( BarcelonaAdjustments ),
+        s"${adjustmentsFile}Barcelona",
+        s"${proofFile}Barcelona",
+        reportingDir
+      )
     }
   }
 
@@ -908,7 +913,12 @@ object RHOCTxnGraphClosure
     val PithiaAdjustments = getClique( pithiaEdge )
 
     def reportAdjustments( ) : Unit = {
-      reportAdjustmentsMap( adjustmentsMap( PithiaAdjustments ) )
+      reportAdjustmentsMap( 
+        adjustmentsMap( PithiaAdjustments ),
+        s"${adjustmentsFile}Pithia",
+        s"${proofFile}Pithia",
+        reportingDir
+      )
     }
   }
 }
