@@ -78,6 +78,18 @@ class InitialAdjustment(
 case class ActualAdjustment( txn : RHOCTxn, cleanBalance : Float, taintedBalance : Float ) extends Adjustment {  
 }
 
+trait EdgeT[Node] {
+  def src       : Node
+  def trgt      : Node
+  def weight    : Float
+  def hash      : String
+  def blockId   : String
+
+  override def toString() : String = {
+    s"$src -$weight-> $trgt"
+  }
+}
+
 object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn] 
     with InputCSVData {
   import AdjustmentConstants._
@@ -640,4 +652,263 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
 
 }
 
+case class Edge[Node](
+  override val src           : Node,
+  override val trgt          : Node,
+  override val weight        : Float,
+  override val hash          : String,
+  override val blockId       : String,
+  override val justification : Set[Edge[Node]]
+) extends EdgeT[Node] with Justified[Edge[Node]]
 
+trait AddressT {
+  def addr      : String
+  def balance   : Float
+}
+
+case class Address( 
+  override val addr    : String, 
+  override val balance : Float
+) extends AddressT {
+  override def equals( a : Any ) = {
+    a match {
+      case Address( `addr`, _ ) => true
+      case _ => false
+    }
+  }
+  override def hashCode = ( addr ).##
+}
+
+case class RHOCTxnEdge(
+  override val src           : Address,
+  override val trgt          : Address,
+  override val weight        : Float,
+  override val hash          : String,
+  override val blockId       : String,
+  override val justification : Set[RHOCTxnEdge]
+) extends EdgeT[Address] with Justified[RHOCTxnEdge]
+
+object RHOCTxnGraphClosure 
+    extends JustifiedClosure[Address, RHOCTxnEdge] with InputCSVData {
+  import AdjustmentConstants._
+
+  // Use this initial edge to generate the Barcelona clique
+  val barcelonaEdge : RHOCTxnEdge = {
+    new RHOCTxnEdge(
+      new Address( barcelonaLabel, 0 ),
+      new Address( barcelonaAddr, barcelonaTaint ),
+      barcelonaTaint,
+      "scam",
+      "scam",
+      new HashSet[RHOCTxnEdge]()
+    )
+  }
+
+  // Use this initial edge to generate the Pithia clique
+  val pithiaEdge : RHOCTxnEdge = {
+    new RHOCTxnEdge(
+      new Address( pithiaLabel, 0 ),
+      new Address( pithiaAddr, pithiaTaint ),
+      pithiaTaint,
+      "scam",
+      "scam",
+      new HashSet[RHOCTxnEdge]()
+    )
+  }
+
+  def loadAndFormatWalletData( source : String, dir : String ) : Map[String,Float] = {
+    loadWalletData( source, dir ).foldLeft( new HashMap[String,Float]() )(
+      ( acc, walletArray ) => {
+        acc + ( walletArray( 0 ).toLowerCase -> walletArray( 1 ).toFloat )
+      }
+    )
+  }
+
+  var balancesD : Option[Map[String,Float]] = None
+  def balances() : Map[String,Float] = {
+    balancesD match {
+      case None => {
+        val balanceMap = loadAndFormatWalletData( walletSource, sourceDir )
+        balancesD = Some( balanceMap )
+        balanceMap
+      }
+      case Some( balanceMap ) => balanceMap
+    }
+  }
+    
+  def loadAndFormatTxnData( source : String, dir : String ) : List[RHOCTxnEdge] = {
+    for( txnArray <- loadTxnData( source, dir ) ) yield {
+      RHOCTxnEdge(
+        new Address( txnArray(4), 0 ),
+        new Address( txnArray(5), 0 ),
+        txnArray(6).toFloat,
+        txnArray(0),
+        txnArray(1),
+        new HashSet[RHOCTxnEdge]()
+      )
+    }
+  }
+
+  var txnDataV : Option[List[RHOCTxnEdge]] = None
+  def txnData() : List[RHOCTxnEdge] = {
+    txnDataV match {
+      case None => {
+        val txnD = loadAndFormatTxnData( txnSource, sourceDir )
+        txnDataV = Some( txnD )
+        txnD
+      }
+      case Some( txnD ) => txnD
+    }
+  }
+
+  // We run the transitive closure to generate the tainted
+  // clique, i.e. the graph of transactions that communicate taint.
+  // During the calculation of the transitive closure we calculate the
+  // weight of each edge to be the fraction of the amt of the
+  // transaction divided by the sum of all the outgoing transactions.
+
+  def nextRHOCTxnWeightedEdges( txn : RHOCTxnEdge ) : Set[RHOCTxnEdge] = {
+    val progeny : List[RHOCTxnEdge] = txnData().filter( ( txnD ) => { txnD.src == txn.trgt } )
+    val seed : Float = 0
+    val totalWeight = progeny.foldLeft( seed )( ( acc, t ) => { acc + t.weight } )
+    val divisor = { 
+      if ( totalWeight == 0 )
+      { 1 }
+      else { totalWeight }
+    }
+
+    progeny.map(
+      ( t ) => {
+        RHOCTxnEdge(
+          t.src,
+          t.trgt,
+          ( t.weight / divisor ),
+          t.hash,
+          t.blockId,
+          (new HashSet[RHOCTxnEdge]() + txn)
+        )
+      }
+    ).toSet
+  }    
+
+  override def next = nextRHOCTxnWeightedEdges
+  override def key = _.trgt
+
+  def taintedClique( taintMap : Map[Address,Set[_ <: RHOCTxnEdge]] ) : List[RHOCTxnEdge] = {
+    taintMap.values.fold( new HashSet[RHOCTxnEdge]() )(
+      ( acc, s ) => {
+        s match {
+          case rTE : RHOCTxnEdge => acc ++ rTE
+          case _ => throw new Exception( s"unexpected edge type: $s" )
+        }
+      }
+    ).toList
+  }
+
+  def getClique( taintedEdge : RHOCTxnEdge ) : List[RHOCTxnEdge] = { taintedClique( close( taintedEdge ) ) }
+
+  // Now, we can rerun the closure just on the clique and calculate
+  // the taint at an address as the application of the weight to the
+  // "balance" of the target address of the edge. Note that the balance here is
+  // just the taint because we begin from the root of the clique where
+  // the balance is entirely taint and carry that forward through the
+  // calculation of the closure.
+
+  def nextRHOCTxnTaint( clique : List[RHOCTxnEdge] )( txn : RHOCTxnEdge ) : Set[RHOCTxnEdge] = {
+    val progeny : List[RHOCTxnEdge] = clique.filter( ( txnD ) => { txnD.src == txn.trgt } )
+    progeny.map(
+      ( t ) => {
+        val trgtTaint : Float = txn.trgt.balance * t.weight
+        RHOCTxnEdge(
+          t.src,
+          new Address( t.trgt.addr, trgtTaint ),
+          trgtTaint,
+          t.hash,
+          t.blockId,
+          (new HashSet[RHOCTxnEdge]() + txn)
+        )
+      }
+    ).toSet
+  }
+
+  def adjustmentsMap( adjustments : List[RHOCTxnEdge] ) : Map[String,( Float, Float, Set[List[RHOCTxnEdge]] )] = {
+    val empty : Set[List[RHOCTxnEdge]] = new HashSet[List[RHOCTxnEdge]]()
+    val seed : Map[String,( Float, Float, Set[List[RHOCTxnEdge]] )] = new HashMap[String,( Float, Float, Set[List[RHOCTxnEdge]] )]()
+    balances().foldLeft( seed )(
+      ( acc, entry ) => {
+        val ( addr, balance ) = entry
+        val addrAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.src.addr == addr )
+        addrAdj match {
+          case Nil => {
+            val adj = ( balance, 0.toFloat, empty )
+            acc + ( addr -> adj )
+          }
+          case edges : List[RHOCTxnEdge] => {
+            val adjSeed : ( Float, Set[List[RHOCTxnEdge]] ) = ( 0, empty )
+            val adj = edges.foldLeft( adjSeed )(
+              ( adjAcc, e ) => {
+                val ( adjAccW, adjAccPaths ) = adjAcc
+                val rTE : RHOCTxnEdge = e.asInstanceOf[RHOCTxnEdge]
+                val eProofs : Set[List[RHOCTxnEdge]] = rTE.paths().asInstanceOf[Set[List[RHOCTxnEdge]]]
+                val eW : Float = rTE.weight
+                ( adjAccW + eW, adjAccPaths ++ eProofs )
+              }
+            )
+            val balAdj = ( balance, adj._1, adj._2 )
+            acc + ( addr -> balAdj )
+          }
+        }
+      }
+    )
+  }
+
+  def reportAdjustments(
+    adjustmentsMap : Map[String,( Float, Float, Set[List[RHOCTxnEdge]] )],
+    adjFileName : String, proofFileName : String,
+    dir : String
+  ) : Unit = {
+    val adjustmentsFile = new File( s"${dir}/${adjFileName}" )
+    val proofFile = new File( s"${dir}/${proofFileName}" )
+    val adjustmentsWriter = new BufferedWriter( new FileWriter( adjFileName ) )
+    val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
+    for( ( k, v ) <- adjustmentsMap ) {
+      val ( balance, adjustment, proof ) = v
+      adjustmentsWriter.write( s"$k, ${balance}, ${adjustment}\n" )
+      proofWriter.write( s"$k, ${proof}\n" )
+    }
+    adjustmentsWriter.flush()
+    proofWriter.flush()
+    adjustmentsWriter.close()
+    proofWriter.close()
+  }
+
+  def reportAdjustmentsMap( adjustmentsMap : Map[String,( Float, Float, Set[List[RHOCTxnEdge]] )] ) : Unit = {
+    reportAdjustments( adjustmentsMap, adjustmentsFile, proofFile, reportingDir )
+  }
+
+  val BarcelonaWeights = getClique( barcelonaEdge )
+
+  object BarcelonaClique extends JustifiedClosure[Address, RHOCTxnEdge] {
+    override def next = nextRHOCTxnTaint( BarcelonaWeights )
+    override def key = _.trgt
+
+    val BarcelonaAdjustments = getClique( barcelonaEdge )
+
+    def reportAdjustments( ) : Unit = {
+      reportAdjustmentsMap( adjustmentsMap( BarcelonaAdjustments ) )
+    }
+  }
+
+  val PithiaWeights = getClique( pithiaEdge )
+
+  object PithiaClique extends JustifiedClosure[Address, RHOCTxnEdge] {
+    override def next = nextRHOCTxnTaint( PithiaWeights )
+    override def key = _.trgt
+
+    val PithiaAdjustments = getClique( pithiaEdge )
+
+    def reportAdjustments( ) : Unit = {
+      reportAdjustmentsMap( adjustmentsMap( PithiaAdjustments ) )
+    }
+  }
+}
