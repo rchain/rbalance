@@ -2,9 +2,13 @@ package coop.rchain.rbalance.txns
 import scala.collection.immutable.HashMap
 
 object AdjustmentConstants {
-  val txnSource        : String = "RHOC-tx_7598478-9371757.csv"
-  val walletSource     : String = "wallets_9371743_withzeros.txt"
-  val sourceDir        : String = "src/main/resources"
+  val txnSource        : String             = "RHOC-tx_7598478-9371757.csv"
+  val walletSource     : String             = "wallets_9371743_withzeros.txt"
+  val sourceDir        : String             = "src/main/resources"
+
+  val adjustmentsFile  : String             = "adjustments.csv"
+  val proofFile        : String             = "proof.csv"
+  val reportingDir     : String             = "/Users/lgm/work/projex/rchain/adjustedBalances/rbalance/src/main/resources" 
 
   val rhocContractAddr : String             = "0x168296bb09e24a88805cb9c33356536b980d3fc5"
   val minBlockHeight   : Int                = 7598478
@@ -24,9 +28,5 @@ object AdjustmentConstants {
     (m + ( barcelonaAddr -> barcelonaTaint ) + ( pithiaAddr -> pithiaTaint ))
   }
   val feedback         : Int               = 1
-
-  val adjustmentsFile  : String            = "adjustments.csv"
-  val proofFile        : String            = "proof.csv"
-  val reportingDir     : String            = "/Users/lgm/work/projex/rchain/adjustedBalances/rbalance/src/main/resources" 
 }
 

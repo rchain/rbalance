@@ -223,24 +223,29 @@ object RHOCTxnGraphClosure
     balances().foldLeft( seed )(
       ( acc, entry ) => {
         val ( addr, balance ) = entry
-        val addrAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.src.addr == addr )
-        addrAdj match {
-          case Nil => {
+        val addrCreditAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.trgt.addr == addr )
+        val addrDebitAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.src.addr == addr )
+        ( addrCreditAdj, addrDebitAdj ) match {
+          case ( Nil, _ ) => {
+            println( s"$addr not in clique" )
             val adj = ( balance, 0.toFloat, empty )
             acc + ( addr -> adj )
           }
-          case edges : List[RHOCTxnEdge] => {
+          case ( inEdges, outEdges ) => {
             val adjSeed : ( Float, Set[List[RHOCTxnEdge]] ) = ( 0, empty )
-            val adj = edges.foldLeft( adjSeed )(
+            val adj = inEdges.foldLeft( adjSeed )(
               ( adjAcc, e ) => {
                 val ( adjAccW, adjAccPaths ) = adjAcc
-                val rTE : RHOCTxnEdge = e.asInstanceOf[RHOCTxnEdge]
-                val eProofs : Set[List[RHOCTxnEdge]] = rTE.paths().asInstanceOf[Set[List[RHOCTxnEdge]]]
-                val eW : Float = rTE.weight
-                ( adjAccW + eW, adjAccPaths ++ eProofs )
+                ( adjAccW + e.weight, adjAccPaths.asInstanceOf[Set[List[RHOCTxnEdge]]] ++ e.paths().asInstanceOf[Set[List[RHOCTxnEdge]]] )
               }
             )
-            val balAdj = ( balance, adj._1, adj._2 )
+            val debit = outEdges.foldLeft( 0.asInstanceOf[Float] )( ( dAcc, e ) => { dAcc + e.weight } )
+            val totalAdjustment = adj._1 - debit
+            println( s"$addr in clique with" )
+            println( s"${inEdges.length} incoming edges contributing ${adj._1}") 
+            println( s"${outEdges.length} outgoing edges debiting ${debit}" ) 
+            println( s"giving total adjustment ${totalAdjustment}" )
+            val balAdj = ( balance, totalAdjustment, adj._2 )
             acc + ( addr -> balAdj )
           }
         }
@@ -265,9 +270,11 @@ object RHOCTxnGraphClosure
         proofWriter.write( s"$k, ${proof}\n" )
       }      
     }
+
     adjustmentsWriter.flush()
-    proofWriter.flush()
     adjustmentsWriter.close()
+
+    proofWriter.flush()
     proofWriter.close()
   }
 
