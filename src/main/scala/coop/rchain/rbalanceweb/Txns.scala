@@ -92,7 +92,6 @@ object RHOCTxnGraphClosure
   val barcelonaEdge : RHOCTxnEdge = {
     new RHOCTxnIdentity(
       new Address( barcelonaAddr.toLowerCase, barcelonaTaint ),
-//      new Address( barcelonaAddr.toLowerCase, barcelonaTaint ),
       barcelonaTaint,
       "scam",
       "scam",
@@ -104,7 +103,6 @@ object RHOCTxnGraphClosure
   val pithiaEdge : RHOCTxnEdge = {
     new RHOCTxnIdentity(
       new Address( pithiaAddr.toLowerCase, pithiaTaint ),
-//      new Address( pithiaAddr.toLowerCase, pithiaTaint ),
       pithiaTaint,
       "scam",
       "scam",
@@ -164,27 +162,25 @@ object RHOCTxnGraphClosure
   // transaction divided by the sum of all the outgoing transactions.
 
   def nextRHOCTxnWeightedEdges( txn : RHOCTxnEdge ) : Set[RHOCTxnEdge] = {
-    val progeny : List[RHOCTxnEdge] = txnData().filter( ( txnD ) => { txnD.src == txn.trgt } )
-    val seed : Float = 0
-    val totalWeight = progeny.foldLeft( seed )( ( acc, t ) => { acc + t.weight } )
-    val divisor = { 
-      if ( totalWeight == 0 )
-      { 1 }
-      else { totalWeight }
-    }
-
-    progeny.map(
-      ( t ) => {
-        RHOCTxnEdgeRep(
-          t.src,
-          t.trgt,
-          ( t.weight / divisor ),
-          t.hash,
-          t.blockId,
-          (new HashSet[RHOCTxnEdge]() + txn)
-        )
+    txnData().filter( ( txnD ) => { txnD.src == txn.trgt } ) match {
+      case Nil     => new HashSet[RHOCTxnEdge]()
+      case progeny => {
+        val seed : Float = 0
+        val totalWeight = progeny.foldLeft( seed )( ( acc, t ) => { acc + t.weight } )
+        progeny.map(
+          ( t ) => {
+            RHOCTxnEdgeRep(
+              t.src,
+              t.trgt,
+              ( t.weight / totalWeight ),
+              t.hash,
+              t.blockId,
+              (new HashSet[RHOCTxnEdge]() + txn)
+            )
+          }
+        ).toSet
       }
-    ).toSet
+    }        
   }    
 
   override def next = nextRHOCTxnWeightedEdges
@@ -208,6 +204,7 @@ object RHOCTxnGraphClosure
     progeny.map(
       ( t ) => {
         val trgtTaint : Float = txn.trgt.balance * t.weight
+        //println( s"$t : $trgtTaint" )
         RHOCTxnEdgeRep(
           t.src,
           new Address( t.trgt.addr, trgtTaint ),
@@ -258,8 +255,8 @@ object RHOCTxnGraphClosure
   ) : Unit = {
     val adjustmentsFile = new File( s"${dir}/${adjFileName}" )
     val proofFile = new File( s"${dir}/${proofFileName}" )
-    val adjustmentsWriter = new BufferedWriter( new FileWriter( adjFileName ) )
-    val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
+    val adjustmentsWriter = new BufferedWriter( new FileWriter( adjustmentsFile ) )
+    val proofWriter = new BufferedWriter( new FileWriter( proofFile ) )
     for( ( k, v ) <- adjustmentsMap ) {
       val ( balance, adjustment, proof ) = v
       if ( adjustment != 0 ) {
@@ -286,10 +283,23 @@ object RHOCTxnGraphClosure
   }
 
   val BarcelonaWeights = getClique( barcelonaEdge )
+  val PithiaWeights = getClique( pithiaEdge )
+
+  def reportClique( clique : List[RHOCTxnEdge] ) : Unit = {
+    val cliqueFile = new File( s"clique.csv" )
+    val cliqueWriter = new BufferedWriter( new FileWriter( cliqueFile ) )
+    for( txn <- clique ) {
+      cliqueWriter.write( s"$txn\n" )
+    }
+    cliqueWriter.flush()
+    cliqueWriter.close()
+  }
 
   object BarcelonaClique extends JustifiedClosure[Address, RHOCTxnEdge] {
     override def next = nextRHOCTxnTaint( BarcelonaWeights )
     override def key = _.trgt
+
+    def getClique( taintedEdge : RHOCTxnEdge ) : List[RHOCTxnEdge] = { taintedClique( close( taintedEdge ) ) }
 
     val BarcelonaAdjustments = getClique( barcelonaEdge )
 
@@ -303,13 +313,13 @@ object RHOCTxnGraphClosure
         reportingDir
       )
     }
-  }
-
-  val PithiaWeights = getClique( pithiaEdge )
+  }  
 
   object PithiaClique extends JustifiedClosure[Address, RHOCTxnEdge] {
     override def next = nextRHOCTxnTaint( PithiaWeights )
     override def key = _.trgt
+
+    def getClique( taintedEdge : RHOCTxnEdge ) : List[RHOCTxnEdge] = { taintedClique( close( taintedEdge ) ) }
 
     val PithiaAdjustments = getClique( pithiaEdge )
 

@@ -9,7 +9,7 @@ object AdjustmentConstants {
   val barcelonaAddr    : String             = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
   val barcelonaTaint   : Float              = 11000000
   val pithiaLabel      : String             = "Pithia"
-  val pithiaAddr       : String             = "GetThisFromSpreadSheet"
+  val pithiaAddr       : String             = "0xcd9910aea989e9b0b6b3e1192a474b5200e88c6b"
   val pithiaTaint      : Float              = 60000000
   val taintLabels      : Map[String,String] = {
     val m = new HashMap[String,String]()
