@@ -261,13 +261,44 @@ object RHOCTxnGraphClosure
     val adjFName          = s"${dir}/${adjFileName}"
     val pfFName           = s"${dir}/${proofFileName}"
 
+    // collect stats
+    val numberOfAdjustments =
+      adjustmentsMap.foldLeft( 0 )(
+      ( acc, entry ) => {
+        val ( k, ( balance, adjustment, pf ) ) = entry
+        if ( adjustment != 0 ) {
+          acc + 1
+        }
+        else acc
+      }
+    )
+    val nonDust =
+      adjustmentsMap.foldLeft( ( 0, 0.toFloat, List[(String,Float)]() ) )(
+        ( acc, entry ) => {
+          val ( k, ( balance, adjustment, pf ) ) = entry
+          if ( adjustment > 1 ) {
+            val ( count, total, addrs ) = acc
+            val biglyHit = ( k, balance )
+            ( count + 1, total + adjustment, addrs ++ List[(String,Float)](biglyHit) )
+          }
+          else acc
+        }
+      )
+
+    println( s"RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR" )
+    println( s"Total number of adjustments ${numberOfAdjustments}" )
+    println( s"Out of ${adjustmentsMap.size}" )
+    println( s"Total adjustments that are not dust ${nonDust._1} adding to ${nonDust._2}" )
+    for( addr <- nonDust._3 ) { println( s"${addr._1}" ) }
+    println( s"RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR" )
+
     // proofs were being written to adjustment file... lol!
     val adjustmentsFile   = new File( adjFName )
     val adjustmentsWriter = new BufferedWriter( new FileWriter( adjustmentsFile ) )
     
     for( ( k, v ) <- adjustmentsMap ) {
       val ( balance, adjustment, proof ) = v
-      if ( adjustment != 0 ) {
+      if ( adjustment > 0.00000001 ) { // RHOC precision
         println( s"${k} -> ${adjustment}" )
         adjustmentsWriter.write( s"$k, ${balance}, ${adjustment}\n" )        
       }      
@@ -280,7 +311,7 @@ object RHOCTxnGraphClosure
     val proofWriter       = new BufferedWriter( new FileWriter( proofFile ) )
     for( ( k, v ) <- adjustmentsMap ) {
       val ( balance, adjustment, proof ) = v
-      if ( adjustment != 0 ) {
+      if ( adjustment > 0.00000001 ) { // RHOC precision
         println( s"${k} -> ${adjustment}" )
         proofWriter.write( s"$k, ${proof}\n" )
       }      
