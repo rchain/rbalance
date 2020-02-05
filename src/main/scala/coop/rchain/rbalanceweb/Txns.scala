@@ -471,14 +471,14 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def computeTaint( taintMap : Map[String,Set[_ <: RHOCTxn]], taintAcc : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] )(
     txn : RHOCTxn, taintSrc : Float
   ) : Option[(Float, Set[List[_ <: RHOCTxn]])]  = {
-    println( s"computing taint for ${txn.trgt}" )
+    //println( s"computing taint for ${txn.trgt}" )
     taintAcc.get( txn.trgt ) match {
       case None => {
         val emptySet : Set[List[_ <: RHOCTxn]] = new HashSet[List[RHOCTxn]]()
         txn.justification.toList match {
           case Nil => {
             val tpp = ( taintSrc, new HashSet[List[RHOCTxn]]() )
-            println( s"Entry in taint map: $tpp" )
+            //println( s"Entry in taint map: $tpp" )
             Some( tpp )
           }
           case txns => {            
@@ -508,12 +508,12 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                     computeTaint( taintMap, taintAcc )( txnJ, taintSrc ) match {
                       case Some( ( taintJ, proof ) ) => {
                         val taint = ( amt * taintJ )/bal
-                        println( s"${txn} amt is ${txn.amt}" )
-                        println( s"${txn} bal is ${getBalance(txn)}" )
-                        println( s"${txnJ} amt is ${txnJ.amt}" )
-                        println( s"${txnJ} bal is ${bal}" )
-                        println( s"${txnJ} taint is ${taintJ}" )
-                        println( s"${txn} taint is ${taint}" )
+                        //println( s"${txn} amt is ${txn.amt}" )
+                        //println( s"${txn} bal is ${getBalance(txn)}" )
+                        //println( s"${txnJ} amt is ${txnJ.amt}" )
+                        //println( s"${txnJ} bal is ${bal}" )
+                        //println( s"${txnJ} taint is ${taintJ}" )
+                        //println( s"${txn} taint is ${taint}" )
                         val accProof : Set[List[_ <: RHOCTxn]] = acc._2
                         val proofExt : Set[List[_ <: RHOCTxn]] =
                           accProof.toList match {
@@ -536,7 +536,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
                   }
                 }
               )
-            println( s"${txn.trgt}: taint proof pair: $taintProofPair" )
+            //println( s"${txn.trgt}: taint proof pair: $taintProofPair" )
             Some( taintProofPair )
           }
         }        
@@ -550,7 +550,6 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   ) : Map[String,( Adjustment, Set[List[_ <: RHOCTxn]] )] = {
     val emptySet : Set[List[_ <: RHOCTxn]] = new HashSet[List[RHOCTxn]]()
     val txnSet : Set[_ <: RHOCTxn] = txnSetFromClosure( taintMap )
-
 
     txnSet.foldLeft( new HashMap[String,( Adjustment, Set[List[_ <: RHOCTxn]] )]() )(
       ( acc, txn ) => {
