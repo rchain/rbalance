@@ -679,14 +679,29 @@ case class Address(
   override def hashCode = ( addr ).##
 }
 
-case class RHOCTxnEdge(
+trait RHOCTxnEdge extends EdgeT[Address] with Justified[RHOCTxnEdge]
+
+case class RHOCTxnIdentity(
+//  override val src           : Address,
+//  override val trgt          : Address,
+  val addr                   : Address,
+  override val weight        : Float,
+  override val hash          : String,
+  override val blockId       : String,
+  override val justification : Set[RHOCTxnEdge]
+) extends RHOCTxnEdge {
+  override def src = addr
+  override def trgt = addr
+}
+
+case class RHOCTxnEdgeRep(
   override val src           : Address,
   override val trgt          : Address,
   override val weight        : Float,
   override val hash          : String,
   override val blockId       : String,
   override val justification : Set[RHOCTxnEdge]
-) extends EdgeT[Address] with Justified[RHOCTxnEdge]
+) extends RHOCTxnEdge
 
 object RHOCTxnGraphClosure 
     extends JustifiedClosure[Address, RHOCTxnEdge] with InputCSVData {
@@ -694,9 +709,9 @@ object RHOCTxnGraphClosure
 
   // Use this initial edge to generate the Barcelona clique
   val barcelonaEdge : RHOCTxnEdge = {
-    new RHOCTxnEdge(
-      new Address( barcelonaLabel, 0 ),
-      new Address( barcelonaAddr, barcelonaTaint ),
+    new RHOCTxnIdentity(
+      new Address( barcelonaAddr.toLowerCase, barcelonaTaint ),
+//      new Address( barcelonaAddr.toLowerCase, barcelonaTaint ),
       barcelonaTaint,
       "scam",
       "scam",
@@ -706,9 +721,9 @@ object RHOCTxnGraphClosure
 
   // Use this initial edge to generate the Pithia clique
   val pithiaEdge : RHOCTxnEdge = {
-    new RHOCTxnEdge(
-      new Address( pithiaLabel, 0 ),
-      new Address( pithiaAddr, pithiaTaint ),
+    new RHOCTxnIdentity(
+      new Address( pithiaAddr.toLowerCase, pithiaTaint ),
+//      new Address( pithiaAddr.toLowerCase, pithiaTaint ),
       pithiaTaint,
       "scam",
       "scam",
@@ -738,7 +753,7 @@ object RHOCTxnGraphClosure
     
   def loadAndFormatTxnData( source : String, dir : String ) : List[RHOCTxnEdge] = {
     for( txnArray <- loadTxnData( source, dir ) ) yield {
-      RHOCTxnEdge(
+      RHOCTxnEdgeRep(
         new Address( txnArray(4), 0 ),
         new Address( txnArray(5), 0 ),
         txnArray(6).toFloat,
@@ -779,7 +794,7 @@ object RHOCTxnGraphClosure
 
     progeny.map(
       ( t ) => {
-        RHOCTxnEdge(
+        RHOCTxnEdgeRep(
           t.src,
           t.trgt,
           ( t.weight / divisor ),
@@ -795,14 +810,7 @@ object RHOCTxnGraphClosure
   override def key = _.trgt
 
   def taintedClique( taintMap : Map[Address,Set[_ <: RHOCTxnEdge]] ) : List[RHOCTxnEdge] = {
-    taintMap.values.fold( new HashSet[RHOCTxnEdge]() )(
-      ( acc, s ) => {
-        s match {
-          case rTE : RHOCTxnEdge => acc ++ rTE
-          case _ => throw new Exception( s"unexpected edge type: $s" )
-        }
-      }
-    ).toList
+    taintMap.values.foldLeft( new HashSet[RHOCTxnEdge]() )( ( acc, s ) => { acc ++ s } ).toList
   }
 
   def getClique( taintedEdge : RHOCTxnEdge ) : List[RHOCTxnEdge] = { taintedClique( close( taintedEdge ) ) }
@@ -819,7 +827,7 @@ object RHOCTxnGraphClosure
     progeny.map(
       ( t ) => {
         val trgtTaint : Float = txn.trgt.balance * t.weight
-        RHOCTxnEdge(
+        RHOCTxnEdgeRep(
           t.src,
           new Address( t.trgt.addr, trgtTaint ),
           trgtTaint,
@@ -873,8 +881,11 @@ object RHOCTxnGraphClosure
     val proofWriter = new BufferedWriter( new FileWriter( proofFileName ) )
     for( ( k, v ) <- adjustmentsMap ) {
       val ( balance, adjustment, proof ) = v
-      adjustmentsWriter.write( s"$k, ${balance}, ${adjustment}\n" )
-      proofWriter.write( s"$k, ${proof}\n" )
+      if ( adjustment != 0 ) {
+        println( s"${k} -> ${adjustment}" )
+        adjustmentsWriter.write( s"$k, ${balance}, ${adjustment}\n" )
+        proofWriter.write( s"$k, ${proof}\n" )
+      }      
     }
     adjustmentsWriter.flush()
     proofWriter.flush()
@@ -886,6 +897,13 @@ object RHOCTxnGraphClosure
     reportAdjustmentsMap( adjustmentsMap, adjustmentsFile, proofFile, reportingDir )
   }
 
+  def annotateFileName( fName : String, annotation : String ) = {
+    val fNameComponents = adjustmentsFile.split( '.' )
+    val fName = fNameComponents( 0 )
+    val fExt = fNameComponents( 1 )
+    s"${fName}${annotation}.${fExt}"
+  }
+
   val BarcelonaWeights = getClique( barcelonaEdge )
 
   object BarcelonaClique extends JustifiedClosure[Address, RHOCTxnEdge] {
@@ -895,10 +913,12 @@ object RHOCTxnGraphClosure
     val BarcelonaAdjustments = getClique( barcelonaEdge )
 
     def reportAdjustments( ) : Unit = {
-      reportAdjustmentsMap( 
+      val adjFName = annotateFileName( adjustmentsFile, "Barcelona" )
+      val pfFName = annotateFileName( proofFile, "Barcelona" )
+      reportAdjustmentsMap(
         adjustmentsMap( BarcelonaAdjustments ),
-        s"${adjustmentsFile}Barcelona",
-        s"${proofFile}Barcelona",
+        s"${adjFName}",
+        s"${pfFName}",
         reportingDir
       )
     }
@@ -913,10 +933,12 @@ object RHOCTxnGraphClosure
     val PithiaAdjustments = getClique( pithiaEdge )
 
     def reportAdjustments( ) : Unit = {
-      reportAdjustmentsMap( 
+      val adjFName = annotateFileName( adjustmentsFile, "Pithia" )
+      val pfFName = annotateFileName( proofFile, "Pithia" )
+      reportAdjustmentsMap(
         adjustmentsMap( PithiaAdjustments ),
-        s"${adjustmentsFile}Pithia",
-        s"${proofFile}Pithia",
+        s"${adjFName}",
+        s"${pfFName}",
         reportingDir
       )
     }
