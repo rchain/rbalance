@@ -110,8 +110,8 @@ object RHOCTxnGraphClosure
     )
   }
 
-  def loadAndFormatWalletData( source : String, dir : String ) : Map[String,Float] = {
-    loadWalletData( source, dir ).foldLeft( new HashMap[String,Float]() )(
+  def loadAndFormatWalletData() : Map[String,Float] = {
+    loadWalletData().foldLeft( new HashMap[String,Float]() )(
       ( acc, walletArray ) => {
         acc + ( walletArray( 0 ).toLowerCase -> walletArray( 1 ).toFloat )
       }
@@ -122,7 +122,7 @@ object RHOCTxnGraphClosure
   def balances() : Map[String,Float] = {
     balancesD match {
       case None => {
-        val balanceMap = loadAndFormatWalletData( walletSource, sourceDir )
+        val balanceMap = loadAndFormatWalletData()
         balancesD = Some( balanceMap )
         balanceMap
       }
@@ -130,8 +130,8 @@ object RHOCTxnGraphClosure
     }
   }
     
-  def loadAndFormatTxnData( source : String, dir : String ) : List[RHOCTxnEdge] = {
-    for( txnArray <- loadTxnData( source, dir ) ) yield {
+  def loadAndFormatTxnData() : List[RHOCTxnEdge] = {
+    for( txnArray <- loadTxnData() ) yield {
       RHOCTxnEdgeRep(
         new Address( txnArray(4), 0 ),
         new Address( txnArray(5), 0 ),
@@ -147,7 +147,7 @@ object RHOCTxnGraphClosure
   def txnData() : List[RHOCTxnEdge] = {
     txnDataV match {
       case None => {
-        val txnD = loadAndFormatTxnData( txnSource, sourceDir )
+        val txnD = loadAndFormatTxnData()
         txnDataV = Some( txnD )
         txnD
       }

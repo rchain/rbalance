@@ -140,8 +140,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     rslt
   }
 
-  def loadAndFormatTxnData( source : String, dir : String ) : List[RHOCTxn] = {
-    for( txnArray <- loadTxnData( source, dir ) ) yield {
+  def loadAndFormatTxnData() : List[RHOCTxn] = {
+    for( txnArray <- loadTxnData() ) yield {
       RHOCTxnRep(
         txnArray(4),
         txnArray(5),
@@ -157,7 +157,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def txnData() : List[RHOCTxn] = {
     txnDataV match {
       case None => {
-        val txnD = loadAndFormatTxnData( txnSource, sourceDir )
+        val txnD = loadAndFormatTxnData()
         txnDataV = Some( txnD )
         txnD
       }
@@ -195,8 +195,8 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
     }    
   }
 
-  def loadAndFormatWalletData( source : String, dir : String ) : Map[String,Float] = {
-    loadWalletData( source, dir ).foldLeft( new HashMap[String,Float]() )(
+  def loadAndFormatWalletData() : Map[String,Float] = {
+    loadWalletData().foldLeft( new HashMap[String,Float]() )(
       ( acc, walletArray ) => {
         acc + ( walletArray( 0 ).toLowerCase -> walletArray( 1 ).toFloat )
       }
@@ -207,7 +207,7 @@ object RHOCTxnClosure extends JustifiedClosure[String, RHOCTxn]
   def balances() : Map[String,Float] = {
     balancesD match {
       case None => {
-        val balanceMap = loadAndFormatWalletData( walletSource, sourceDir )
+        val balanceMap = loadAndFormatWalletData()
         balancesD = Some( balanceMap )
         balanceMap
       }

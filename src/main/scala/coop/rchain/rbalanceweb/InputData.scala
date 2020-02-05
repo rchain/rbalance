@@ -5,10 +5,6 @@ import scala.collection.immutable.Map
 import scala.collection.immutable.HashMap
 
 trait InputCSVData {
-  val txnSource    : String = "RHOC-tx_7598478-9371757.csv"
-  val walletSource : String = "wallets_7598592.txt"
-  val sourceDir    : String = "src/main/resources"
-
   def loadData( source : String, dir : String ) : List[Array[String]] = {
     val bufferedSource = scala.io.Source.fromFile( s"$dir/$source" )
     val line :: lines = bufferedSource.getLines.toList
@@ -17,11 +13,11 @@ trait InputCSVData {
     rslt
   }
 
-  def loadWalletData( source : String, dir : String ) : List[Array[String]] = {
-    loadData( walletSource, sourceDir )
+  def loadWalletData() : List[Array[String]] = {
+    loadData( AdjustmentConstants.walletSource, AdjustmentConstants.sourceDir )
   }
 
-  def loadTxnData( source : String, dir : String ) : List[Array[String]] = {
-    loadData( txnSource, sourceDir )
+  def loadTxnData() : List[Array[String]] = {
+    loadData( AdjustmentConstants.txnSource, AdjustmentConstants.sourceDir )
   }
 }
