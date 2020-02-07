@@ -114,7 +114,7 @@ object RHOCTxnGraphClosure
       ( acc, txn ) => {
         val kIdx = sortChild( folks, txn, 0 )
         val prefix = acc.take( kIdx - 1 )
-        acc.drop( kIdx ) match {
+        acc.drop( kIdx - 1 ) match {
           case fL :: rFl => {
             prefix ++ List( fL ++ List( txn ) ) ++ rFl
           }
@@ -174,7 +174,7 @@ object RHOCTxnGraphClosure
         new Address( txnArray(4), List[Double]( 0.0 ) ),
         new Address( txnArray(5), List[Double]( 0.0 ) ),
         txnArray(6).toDouble,
-        txnArray(3).toInt,
+        txnArray(2).toInt,
         txnArray(0),
         txnArray(1),
         new HashSet[RHOCTxnEdge]()
