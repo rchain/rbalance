@@ -41,12 +41,12 @@ object EtherscanAPIAccess {
     etherscanTxnRslt( 0 ).asArray.getOrElse( throw new Exception( "not an array" ) )
   }
 
-  def txnRecordData( addr : String, e : Json ) : Option[( String, String, Float, String, String )] = {
+  def txnRecordData( addr : String, e : Json ) : Option[( String, String, Double, String, String )] = {
     val trgtAddr = ( e \\ "to" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
     val blockNumber = ( e \\ "blockNumber" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toInt
     if ( ( trgtAddr != addr )  && ( blockNumber <= maxBlockHeight ) ){
       val srcAddr = ( e \\ "from" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
-      val amt = ( e \\ "value" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toFloat
+      val amt = ( e \\ "value" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) ).toDouble
       val hash = ( e \\ "hash" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
       val blockHash = ( e \\ "blockHash" )( 0 ).asString.getOrElse( throw new Exception( "not a string" ) )
       Some( ( srcAddr, trgtAddr, amt, hash, blockHash ) )
