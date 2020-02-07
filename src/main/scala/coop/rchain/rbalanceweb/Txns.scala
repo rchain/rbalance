@@ -345,6 +345,26 @@ object RHOCTxnGraphClosure
     cliqueWriter.close()
   }
 
+  // Exploration
+  def findTxns( clique : List[RHOCTxnEdge] )( addr : String ) : List[RHOCTxnEdge] = {
+    clique.filter( ( txn ) => { ( txn.src == addr ) || ( txn.trgt == addr ) } )
+  }
+
+  def findTxn( clique : List[RHOCTxnEdge] )( hash : String ) : Option[RHOCTxnEdge] = {
+    clique.filter( ( txn ) => { txn.hash == hash } ) match {
+      case Nil => None
+      case txn :: Nil => Some( txn )
+      case txns => throw new Exception( s"more than one transaction with the same hash: $hash \n txns: $txns" )
+    }
+  }
+
+  def findTxnProof( clique : List[RHOCTxnEdge] )( hash : String ) : Set[List[RHOCTxnEdge]] = {
+    findTxn( clique )( hash ) match {
+      case None => new HashSet[List[RHOCTxnEdge]]
+      case Some( txn ) => txn.paths().asInstanceOf[Set[List[RHOCTxnEdge]]]
+    }
+  }
+
   object BarcelonaClique extends JustifiedClosure[Address, RHOCTxnEdge] {
     override def next = nextRHOCTxnTaint( BarcelonaWeights )
     override def key = _.trgt
