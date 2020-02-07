@@ -284,12 +284,30 @@ object RHOCTxnGraphClosure
           else acc
         }
       )
+    val adjZeros =
+      adjustmentsMap.foldLeft( ( 0, 0.toFloat, List[(String,Float)]() ) )(
+      ( acc, entry ) => {
+        val ( k, ( balance, adjustment, pf ) ) = entry
+        if ( ( balance == 0 ) && ( adjustment > 0.000000001 ) ) {
+          val ( count, total, addrs ) = acc
+          val oddlyHit = ( k, adjustment )
+          ( count + 1, total + adjustment, addrs ++ List[(String,Float)]( oddlyHit ) )
+        }
+        else acc
+      }
+    )
+    
 
     println( s"RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR" )
+    println( "\n\n" )
     println( s"Total number of adjustments ${numberOfAdjustments}" )
-    println( s"Out of ${adjustmentsMap.size}" )
+    println( s"Out of ${adjustmentsMap.size}\n\n" )
     println( s"Total adjustments that are not dust ${nonDust._1} adding to ${nonDust._2}" )
     for( addr <- nonDust._3 ) { println( s"${addr._1}" ) }
+    println( "\n\n" )
+    println( s"Total adjustments on addresses with zero balance ${adjZeros._1} adding to ${adjZeros._2}" )
+    for( addr <- adjZeros._3 ) { println( s"${addr}" ) }
+    println( "\n\n" )
     println( s"RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR" )
 
     // proofs were being written to adjustment file... lol!
