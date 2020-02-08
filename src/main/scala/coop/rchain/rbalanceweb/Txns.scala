@@ -190,7 +190,7 @@ object RHOCTxnGraphClosure
   def txnData() : List[RHOCTxnEdge] = {
     txnDataV match {
       case None => {
-        val txnD = loadAndFormatTxnData()
+        val txnD = barcelonaEdge :: pithiaEdge :: loadAndFormatTxnData()
         txnDataV = Some( txnD )
         txnD
       }
@@ -545,6 +545,9 @@ object RHOCTxnGraphClosure
   }
 
   object NaiveCalculation {
+    import scala.collection.mutable.Map
+    import scala.collection.mutable.HashMap
+
     def cup( addr : Address ) : List[RHOCTxnEdge] = {
       txnData().filter( ( txnD ) => { txnD.trgt == addr.addr } ).sortWith( sortTxnsByTimestamp )
     }
@@ -613,6 +616,31 @@ object RHOCTxnGraphClosure
         }
         case Some( t ) => t
       }
+    }
+
+    def reportAdjustments( ) : Unit = {
+      val adjDir = AdjustmentConstants.reportingDir
+      val adjFileName = annotateFileName( AdjustmentConstants.adjustmentsFile, "Combined" )
+      //      val pfFileName = annotateFileName( AdjustmentConstants.proofFile, "Combined" )
+      val adjFName          = s"${adjDir}/${adjFileName}"
+      //      val pfFName           = s"${adjDir}/${proofFileName}"
+
+      val adjustmentsFile   = new File( adjFName )
+      val adjustmentsWriter = new BufferedWriter( new FileWriter( adjustmentsFile ) )
+
+      val edgeMemo : Map[RHOCTxnEdge,Double] = new HashMap[RHOCTxnEdge,Double]()
+      val addrMemo : Map[Address,Double] = new HashMap[Address,Double]()
+
+      for( ( addr, balance ) <- balances() ) {
+        val address = new Address( addr, List[Double]( 0.0 ) )
+        val adjustment = taint( address, edgeMemo, addrMemo )
+        if ( adjustment > 0.00000001 ) { // RHOC precision
+          println( s"${addr} -> ${adjustment}" )
+          adjustmentsWriter.write( s"${addr}, ${balance}, ${adjustment}\n" )
+        }
+      }
+      adjustmentsWriter.flush()
+      adjustmentsWriter.close()
     }
   }
 }
