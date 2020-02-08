@@ -266,7 +266,7 @@ object RHOCTxnGraphClosure
   // calculation of the closure.
 
   def nextRHOCTxnTaint( clique : List[RHOCTxnEdge] )( txn : RHOCTxnEdge ) : Set[RHOCTxnEdge] = {
-    val parents = txnData().filter( ( txnD ) => { txnD.trgt == txn.src } ).sortWith( sortTxnsByTimestamp )
+    val parents = txnData().filter( ( txnD ) => { txnD.trgt == txn.trgt } ).sortWith( sortTxnsByTimestamp )
     val progeny = txnData().filter( ( txnD ) => { txnD.src == txn.trgt } ).sortWith( sortTxnsByTimestamp )
 
     ( parents, progeny ) match {
@@ -289,10 +289,12 @@ object RHOCTxnGraphClosure
         ).toSet
       }
       case ( folks, children ) => {
-        txn.trgt.balance =
-          folks.map( ( f ) => { f.weight } )
+        txn.trgt.balance = folks.map( ( f ) => { f.weight } )
+        println( s"${txn} has ${folks.size} incoming edges and ${children.size} outgoing edges" )
+        println( s"and balance list ${txn.trgt.balance}" )
         val seed : ( Int, Set[RHOCTxnEdge] ) = ( 0, new HashSet[RHOCTxnEdge]() )
         val childGroups = separateChildren( folks, children )
+        println( s"split as ${childGroups}" )
         childGroups.foldLeft( seed )(
           ( acc, cG ) => {
             val ( idx, rslt ) = acc
@@ -323,29 +325,34 @@ object RHOCTxnGraphClosure
     balances().foldLeft( seed )(
       ( acc, entry ) => {
         val ( addr, balance ) = entry
-        val addrCreditAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.trgt.addr == addr )
-        val addrDebitAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.src.addr == addr )
+        val addrCreditAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.trgt.addr == addr ).sortWith( sortTxnsByTimestamp )
+        val addrDebitAdj : List[RHOCTxnEdge] = adjustments.filter( ( e ) => e.src.addr == addr ).sortWith( sortTxnsByTimestamp )
         ( addrCreditAdj, addrDebitAdj ) match {
           case ( Nil, _ ) => {
             println( s"$addr not in clique" )
             val adj = ( balance, 0.toDouble, empty )
             acc + ( addr -> adj )
           }
-          case ( inEdges, outEdges ) => {
-            val adjSeed : ( Double, Set[List[RHOCTxnEdge]] ) = ( 0, empty )
-            val adj = inEdges.foldLeft( adjSeed )(
-              ( adjAcc, e ) => {
-                val ( adjAccW, adjAccPaths ) = adjAcc
-                ( adjAccW + e.weight, adjAccPaths.asInstanceOf[Set[List[RHOCTxnEdge]]] ++ e.paths().asInstanceOf[Set[List[RHOCTxnEdge]]] )
-              }
-            )
-            val debit = outEdges.foldLeft( 0.asInstanceOf[Double] )( ( dAcc, e ) => { dAcc + e.weight } )
-            val totalAdjustment = adj._1 - debit
+          case ( inEdges, outEdges ) => {            
+            val childGroups : List[List[RHOCTxnEdge]] = separateChildren( inEdges, outEdges )
+
+            val seed : ( Int, Double, Set[List[RHOCTxnEdge]] )= ( 0, 0.0, new HashSet[List[RHOCTxnEdge]]() )
+            val ( idx, totalAdjustment, proofs ) =
+              childGroups.foldLeft( seed )(
+                ( acc, cG ) => {
+                  val ( idx, adjustment, pfs ) = acc
+                  val groupParent = inEdges( idx )
+                  val credit = groupParent.weight
+                  val debit = cG.foldLeft( 0.asInstanceOf[Double] )( ( dAcc, t ) => { dAcc + t.weight } )
+                  val nPfs : Set[List[RHOCTxnEdge]] = groupParent.paths().asInstanceOf[Set[List[RHOCTxnEdge]]]
+
+                  ( idx + 1, adjustment + ( credit - debit ), pfs ++ nPfs )
+                }
+              )
+
             println( s"$addr in clique with" )
-            println( s"${inEdges.length} incoming edges contributing ${adj._1}") 
-            println( s"${outEdges.length} outgoing edges debiting ${debit}" ) 
-            println( s"giving total adjustment ${totalAdjustment}" )
-            val balAdj = ( balance, totalAdjustment, adj._2 )
+            
+            val balAdj = ( balance, totalAdjustment, proofs )
             acc + ( addr -> balAdj )
           }
         }
