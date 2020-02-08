@@ -50,8 +50,10 @@ trait AddressT {
 }
 
 case class Address( 
-  override val addr    : String, 
-  override val balance : List[Double]
+  override val addr    : String,
+  // Because there are loops in the txn graph coming up with a purely functional solution will take extra thought
+  // So, i'm punting in the interest of time
+  var balance : List[Double]
 ) extends AddressT {
   override def equals( a : Any ) = {
     a match {
@@ -287,6 +289,8 @@ object RHOCTxnGraphClosure
         ).toSet
       }
       case ( folks, children ) => {
+        txn.trgt.balance =
+          folks.map( ( f ) => { f.weight } )
         val seed : ( Int, Set[RHOCTxnEdge] ) = ( 0, new HashSet[RHOCTxnEdge]() )
         val childGroups = separateChildren( folks, children )
         childGroups.foldLeft( seed )(
@@ -306,7 +310,7 @@ object RHOCTxnGraphClosure
                 )
               }
             ).toSet
-            ( idx + 1, cGtxns )
+            ( idx + 1, rslt ++ cGtxns )
           }
         )._2
       }
