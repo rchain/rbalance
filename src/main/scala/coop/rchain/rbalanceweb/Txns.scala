@@ -543,4 +543,76 @@ object RHOCTxnGraphClosure
       )
     }
   }
+
+  object NaiveCalculation {
+    def cup( addr : Address ) : List[RHOCTxnEdge] = {
+      txnData().filter( ( txnD ) => { txnD.trgt == addr.addr } ).sortWith( sortTxnsByTimestamp )
+    }
+    def cap( addr : Address ) : List[RHOCTxnEdge] = {
+      txnData().filter( ( txnD ) => { txnD.src == addr.addr } ).sortWith( sortTxnsByTimestamp )
+    }
+    def cupNCap( addr : Address ) : ( List[RHOCTxnEdge], List[RHOCTxnEdge] ) = { ( cup( addr ), cap( addr ) ) }
+    def weight( txn : RHOCTxnEdge, memo : Map[RHOCTxnEdge,Double] ) : Double = {
+      memo.get( txn ) match {
+        case None => {
+          val w : Double = 
+            txn match {
+              case idTxn : RHOCTxnIdentity => idTxn.weight
+              case tRep@RHOCTxnEdgeRep( s, _, tw, _, _, _, _, _ ) => {
+                cap( s ) match {
+                  case Nil => throw new Exception( s"impossible cap: ${txn}" )
+                  case t :: Nil => 1.0
+                  case rTs => {
+                    tw / rTs.foldLeft( 0.0 )( ( acc, t ) => { acc + t.weight } )
+                  }
+                }
+              }
+            }
+          memo + ( txn -> w )
+          w
+        }
+        case Some( w ) => w
+      }
+    }
+    def taintOut( 
+      txn1 : RHOCTxnEdge, txn2 : RHOCTxnEdge, 
+      cap : List[RHOCTxnEdge],
+      edgeMemo : Map[RHOCTxnEdge,Double],
+      addrMemo : Map[Address,Double]
+    ) : Double = {
+      cap.filter( 
+        ( txn ) => { ( txn1.timestamp <= txn.timestamp ) && ( txn.timestamp <= txn2.timestamp ) } 
+      ).foldLeft( 0.0 )( ( acc, u ) => acc + taint( u, edgeMemo, addrMemo ) )
+    }
+    def taint( txn : RHOCTxnEdge, edgeMemo : Map[RHOCTxnEdge,Double], addrMemo : Map[Address,Double] ) : Double = {
+      edgeMemo.get( txn ) match {
+        case None => {
+          val t = weight( txn, edgeMemo ) * taint( txn.src, edgeMemo, addrMemo )
+          edgeMemo + ( txn -> t )
+          t
+        }
+        case Some( t ) => t
+      }
+    }
+    def taint( addr : Address, edgeMemo : Map[RHOCTxnEdge,Double], addrMemo : Map[Address,Double] ) : Double = {
+      addrMemo.get( addr ) match {
+        case None => {
+          val ( cup, cap ) = cupNCap( addr )
+          val t = 
+            cup.foldLeft( ( 0, 0.0 ) )(
+              ( acc, inTxnL ) => {
+                val ( idx, tnt ) = acc
+                val inTxnR = cup( idx + 1 )
+                val cTnt = taint( inTxnL, edgeMemo, addrMemo ) - taintOut( inTxnL, inTxnR, cap, edgeMemo, addrMemo )
+
+                ( idx + 1, tnt + cTnt )
+              }
+            )
+          addrMemo + ( addr -> t._1 )
+          t._1
+        }
+        case Some( t ) => t
+      }
+    }
+  }
 }
