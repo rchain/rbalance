@@ -53,7 +53,7 @@ case class Address(
   override val addr    : String,
   // Because there are loops in the txn graph coming up with a purely functional solution will take extra thought
   // So, i'm punting in the interest of time
-  var balance : List[Double]
+  var balance : List[Double],
 ) extends AddressT {
   override def equals( a : Any ) = {
     a match {
@@ -87,7 +87,8 @@ case class RHOCTxnEdgeRep(
   override val timestamp     : Int,
   override val hash          : String,
   override val blockId       : String,
-  override val justification : Set[RHOCTxnEdge]
+  override val justification : Set[RHOCTxnEdge],
+  var moreJust               : Set[RHOCTxnEdge]
 ) extends RHOCTxnEdge
 
 object RHOCTxnGraphClosure 
@@ -179,6 +180,7 @@ object RHOCTxnGraphClosure
         txnArray(2).toInt,
         txnArray(0),
         txnArray(1),
+        new HashSet[RHOCTxnEdge](),
         new HashSet[RHOCTxnEdge]()
       )
     }
@@ -206,24 +208,7 @@ object RHOCTxnGraphClosure
     val parents = txnData().filter( ( txnD ) => { txnD.trgt == txn.src } ).sortWith( sortTxnsByTimestamp )
     val progeny = txnData().filter( ( txnD ) => { txnD.src == txn.trgt } ).sortWith( sortTxnsByTimestamp )
     ( parents, progeny ) match {
-      case ( _, Nil ) => new HashSet[RHOCTxnEdge]()
-      case ( Nil, children ) => {
-        val seed : Double = 0
-        val totalWeight = children.foldLeft( seed )( ( acc, t ) => { acc + t.weight } )
-        progeny.map(
-          ( t ) => {
-            RHOCTxnEdgeRep(
-              t.src,
-              t.trgt,
-              ( t.weight / totalWeight ),
-              t.timestamp,
-              t.hash,
-              t.blockId,
-              (new HashSet[RHOCTxnEdge]() + txn)
-            )
-          }
-        ).toSet
-      }
+      case ( _, Nil ) => new HashSet[RHOCTxnEdge]()      
       case ( folks, children ) => {
         val seed : Double = 0
         val childGroups = separateChildren( folks, children )
@@ -239,7 +224,8 @@ object RHOCTxnGraphClosure
                   t.timestamp,
                   t.hash,
                   t.blockId,
-                  (new HashSet[RHOCTxnEdge]() + txn)
+                  (new HashSet[RHOCTxnEdge]() + txn),
+                  new HashSet[RHOCTxnEdge]()
                 ) 
               } 
             )
@@ -266,58 +252,83 @@ object RHOCTxnGraphClosure
   // calculation of the closure.
 
   def nextRHOCTxnTaint( clique : List[RHOCTxnEdge] )( txn : RHOCTxnEdge ) : Set[RHOCTxnEdge] = {
-    val parents = txnData().filter( ( txnD ) => { txnD.trgt == txn.trgt } ).sortWith( sortTxnsByTimestamp )
-    val progeny = txnData().filter( ( txnD ) => { txnD.src == txn.trgt } ).sortWith( sortTxnsByTimestamp )
+    val parents = txnData().filter( ( txnD ) => { (txnD.trgt == txn.trgt) && ( txnD != txn ) } ).sortWith( sortTxnsByTimestamp )
+    val progeny = clique.filter( ( txnD ) => { txnD.src == txn.trgt } ).sortWith( sortTxnsByTimestamp )
 
     ( parents, progeny ) match {
-      case ( _, Nil ) => new HashSet[RHOCTxnEdge]()
-      case ( Nil, children ) => {
-        children.map(
-          ( t ) => {
-            val trgtTaint : Double = txn.trgt.balance( 0 ) * t.weight
-            //println( s"$t : $trgtTaint" )
-            RHOCTxnEdgeRep(
-              t.src,
-              new Address( t.trgt.addr, List[Double]( trgtTaint ) ),
-              trgtTaint,
-              t.timestamp,
-              t.hash,
-              t.blockId,
-              (new HashSet[RHOCTxnEdge]() + txn)
-            )
-          }
-        ).toSet
-      }
+      case ( _, Nil ) => new HashSet[RHOCTxnEdge]()      
       case ( folks, children ) => {
-        txn.trgt.balance = folks.map( ( f ) => { f.weight } )
+        txn.trgt.balance = List[Double]( txn.weight ) ++ folks.map( _.weight )
         println( s"${txn} has ${folks.size} incoming edges and ${children.size} outgoing edges" )
         println( s"and balance list ${txn.trgt.balance}" )
-        val seed : ( Int, Set[RHOCTxnEdge] ) = ( 0, new HashSet[RHOCTxnEdge]() )
+        val seed : ( Int, Double, Set[RHOCTxnEdge] ) = ( 0, 0.0, new HashSet[RHOCTxnEdge]() )
         val childGroups = separateChildren( folks, children )
         println( s"split as ${childGroups}" )
         childGroups.foldLeft( seed )(
           ( acc, cG ) => {
-            val ( idx, rslt ) = acc
-            val cGtxns : Set[RHOCTxnEdge] = cG.map(
-              ( t ) => {
-                val trgtTaint : Double = txn.trgt.balance( idx ) * t.weight
-                RHOCTxnEdgeRep(
-                  t.src,
-                  t.trgt,
-                  trgtTaint,
-                  t.timestamp,
-                  t.hash,
-                  t.blockId,
-                  (new HashSet[RHOCTxnEdge]() + txn)
-                )
-              }
-            ).toSet
-            ( idx + 1, rslt ++ cGtxns )
+            val ( idx, carry, rslt ) = acc
+            if ( cG.size == 0 ) {
+              ( idx + 1, txn.trgt.balance( idx ) + carry , rslt )
+            }
+            else {
+              val cGtxns : Set[RHOCTxnEdge] = cG.map(
+                ( t ) => {
+                  val trgtTaint : Double = (txn.trgt.balance( idx ) + carry) * t.weight
+                  RHOCTxnEdgeRep(
+                    t.src,
+                    t.trgt,
+                    trgtTaint,
+                    t.timestamp,
+                    t.hash,
+                    t.blockId,
+                    (new HashSet[RHOCTxnEdge]() + txn),                    
+                    (new HashSet[RHOCTxnEdge]() ++ folks.toSet )
+                  )
+                }
+              ).toSet
+
+              ( idx + 1, 0.0, rslt ++ cGtxns )
+            }
           }
-        )._2
+        )._3
       }
     }
   }
+
+  // def nextRHOCTxnTaint( clique : List[RHOCTxnEdge] )( addr : Address ) : Set[Address] = {
+  //   val parents = txnData().filter( ( txnD ) => { txnD.trgt == txn.trgt } ).sortWith( sortTxnsByTimestamp )
+  //   val progeny = clique.filter( ( txnD ) => { txnD.src == addr } ).sortWith( sortTxnsByTimestamp )
+
+  //   ( parents, progeny ) match {
+  //     case ( _, Nil ) => new HashSet[Address]()      
+  //     case ( incomingEdges, outgoingEdges ) => {
+  //       addr.balance = incomingEdges.map( ( f ) => { f.weight } )
+  //       println( s"${addr.addr} has ${incomingEdges.size} incoming edges and ${outgoingEdges.size} outgoing edges" )
+  //       println( s"and balance list ${addr.balance}" )
+  //       val seed : ( Int, Double, Set[Address] ) = ( 0, 0.0, new HashSet[Address]() )
+  //       val childGroups = separateOutgoingEdges( incomingEdges, outgoingEdges )
+  //       println( s"split as ${childGroups}" )
+  //       childGroups.foldLeft( seed )(
+  //         ( acc, cG ) => {
+  //           val ( idx, carry, rslt ) = acc
+  //           if ( cG.size == 0 ) {
+  //             ( idx + 1, txn.trgt.balance( idx ) + carry , rslt )
+  //           }
+  //           else {
+  //             val cGtxns : Set[Address] = cG.map(
+  //               ( t ) => {
+  //                 val trgtTaint : Double = (addr.balance( idx ) + carry) * t.weight
+  //                 Address( t.trgt, List[Double]( trgtTaint ) )
+  //               }
+  //             ).toSet
+
+  //             ( idx + 1, 0.0, rslt ++ cGtxns )
+  //           }
+  //         }
+  //       )._3
+  //     }
+  //   }
+  // }
 
   def adjustmentsMap( adjustments : List[RHOCTxnEdge] ) : Map[String,( Double, Double, Set[List[RHOCTxnEdge]] )] = {
     val empty : Set[List[RHOCTxnEdge]] = new HashSet[List[RHOCTxnEdge]]()
