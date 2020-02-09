@@ -547,74 +547,172 @@ object RHOCTxnGraphClosure
   object NaiveCalculation {
     import scala.collection.mutable.Map
     import scala.collection.mutable.HashMap
+    import scala.collection.mutable.Queue
+
+    trait StateT[RHOCTxnEdge] {
+      def edgeTaintMemo    : Map[RHOCTxnEdge,Double]
+      def edgeWeightMemo   : Map[RHOCTxnEdge,Double]
+      def addrTaintMemo    : Map[Address,Double]
+      def edgeTaintCycles  : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]]
+      def edgeWeightCycles : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]]
+      def addrCycles       : Map[Address,Queue[Address]]
+    }
+
+    case class State[RHOCTxnEdge](
+      override val edgeTaintMemo    : Map[RHOCTxnEdge,Double],
+      override val edgeWeightMemo   : Map[RHOCTxnEdge,Double],
+      override val addrTaintMemo    : Map[Address,Double],
+      override val edgeTaintCycles  : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]],
+      override val edgeWeightCycles : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]],
+      override val addrCycles       : Map[Address,Queue[Address]]
+    ) extends StateT[RHOCTxnEdge]
 
     def cup( addr : Address ) : List[RHOCTxnEdge] = {
-      txnData().filter( ( txnD ) => { txnD.trgt == addr.addr } ).sortWith( sortTxnsByTimestamp )
+      txnData().filter( ( txnD ) => { txnD.trgt == addr } ).sortWith( sortTxnsByTimestamp )
     }
     def cap( addr : Address ) : List[RHOCTxnEdge] = {
-      txnData().filter( ( txnD ) => { txnD.src == addr.addr } ).sortWith( sortTxnsByTimestamp )
+      txnData().filter( ( txnD ) => { txnD.src == addr } ).sortWith( sortTxnsByTimestamp )
     }
     def cupNCap( addr : Address ) : ( List[RHOCTxnEdge], List[RHOCTxnEdge] ) = { ( cup( addr ), cap( addr ) ) }
-    def weight( txn : RHOCTxnEdge, memo : Map[RHOCTxnEdge,Double] ) : Double = {
-      memo.get( txn ) match {
-        case None => {
-          val w : Double = 
-            txn match {
-              case idTxn : RHOCTxnIdentity => idTxn.weight
-              case tRep@RHOCTxnEdgeRep( s, _, tw, _, _, _, _, _ ) => {
-                cap( s ) match {
-                  case Nil => throw new Exception( s"impossible cap: ${txn}" )
-                  case t :: Nil => 1.0
-                  case rTs => {
-                    tw / rTs.foldLeft( 0.0 )( ( acc, t ) => { acc + t.weight } )
-                  }
+    def weight( txn : RHOCTxnEdge, state : State[RHOCTxnEdge] ) : Double = {
+      def baseCase( txnB : RHOCTxnEdge, stateB : State[RHOCTxnEdge] ) : Double = {        
+        val w : Double =
+          txnB match {
+            case idTxn : RHOCTxnIdentity => idTxn.weight
+            case tRep@RHOCTxnEdgeRep( s, _, tw, _, _, _, _, _ ) => {
+              cap( s ) match {
+                case Nil => throw new Exception( s"impossible cap: ${txn}" )
+                case t :: Nil => 1.0
+                case rTs => {
+                  tw / rTs.foldLeft( 0.0 )( ( acc, t ) => { acc + t.weight } )
                 }
               }
             }
-          memo + ( txn -> w )
-          w
+          }
+        stateB.edgeWeightMemo + ( txnB -> w )
+        println( s"w is calculated as ${w}" )
+        w
+      }
+
+      ( state.edgeTaintMemo.get( txn ), state.edgeWeightCycles.get( txn ) ) match {
+        case ( None, None ) => {
+          println( s"requesting weight for ${txn} for the first time" )
+          state.edgeWeightCycles += ( txn -> new Queue[RHOCTxnEdge]() )
+          baseCase( txn, state )
         }
-        case Some( w ) => w
+        case ( None, Some( cycle ) ) => {
+          println( s"requesting weight for ${txn} cyclicly with cycle ${cycle}" )
+          if ( cycle.contains( txn ) ) {
+            0.0 // BUGBUG -- needs to use timestamp ordering
+          }
+          else {
+            cycle += txn
+            baseCase( txn, state )
+          }
+        }
+        case ( Some( w ), _ ) => w
       }
     }
-    def taintOut( 
-      txn1 : RHOCTxnEdge, txn2 : RHOCTxnEdge, 
-      cap : List[RHOCTxnEdge],
-      edgeMemo : Map[RHOCTxnEdge,Double],
-      addrMemo : Map[Address,Double]
+    def taintOut(
+      txn1       : RHOCTxnEdge, txn2 : RHOCTxnEdge, 
+      cap        : List[RHOCTxnEdge],
+      state      : State[RHOCTxnEdge]
     ) : Double = {
       cap.filter( 
         ( txn ) => { ( txn1.timestamp <= txn.timestamp ) && ( txn.timestamp <= txn2.timestamp ) } 
-      ).foldLeft( 0.0 )( ( acc, u ) => acc + taint( u, edgeMemo, addrMemo ) )
+      ).foldLeft( 0.0 )( ( acc, u ) => acc + taint( u, state ) )
     }
-    def taint( txn : RHOCTxnEdge, edgeMemo : Map[RHOCTxnEdge,Double], addrMemo : Map[Address,Double] ) : Double = {
-      edgeMemo.get( txn ) match {
-        case None => {
-          val t = weight( txn, edgeMemo ) * taint( txn.src, edgeMemo, addrMemo )
-          edgeMemo + ( txn -> t )
-          t
+    def taintOut(
+      txn1       : RHOCTxnEdge,
+      cap        : List[RHOCTxnEdge],
+      state      : State[RHOCTxnEdge]
+    ) : Double = {
+      cap.filter( 
+        ( txn ) => { ( txn1.timestamp <= txn.timestamp ) } 
+      ).foldLeft( 0.0 )( ( acc, u ) => acc + taint( u, state ) )
+    }
+    def taint( 
+      txn        : RHOCTxnEdge,
+      state      : State[RHOCTxnEdge]
+    ) : Double = {
+      def baseCase( txnB : RHOCTxnEdge, stateB : State[RHOCTxnEdge] ) : Double = {        
+        val t = weight( txnB, stateB ) * taint( txnB.src, stateB )
+        println( s"t is calculated as ${t}" )
+        stateB.edgeTaintMemo + ( txn -> t )
+        t
+      }
+
+      ( state.edgeTaintMemo.get( txn ), state.edgeTaintCycles.get( txn ) ) match {
+        case ( None, None ) => {
+          println( s"requesting taint for ${txn} for the first time" )
+          state.edgeTaintCycles += ( txn -> new Queue[RHOCTxnEdge]() )
+          baseCase( txn, state )
         }
-        case Some( t ) => t
+        case ( None, Some( cycle ) ) => {
+          println( s"requesting taint for ${txn} cyclicly with cycle ${cycle}" )
+          if ( cycle.contains( txn ) ) {
+            0.0 // BUGBUG - needs to use timestamp ordering
+          }
+          else {
+            cycle += txn
+            baseCase( txn, state )
+          }
+        }
+        case ( Some( t ), _ ) => t
       }
     }
-    def taint( addr : Address, edgeMemo : Map[RHOCTxnEdge,Double], addrMemo : Map[Address,Double] ) : Double = {
-      addrMemo.get( addr ) match {
-        case None => {
-          val ( cup, cap ) = cupNCap( addr )
-          val t = 
-            cup.foldLeft( ( 0, 0.0 ) )(
-              ( acc, inTxnL ) => {
-                val ( idx, tnt ) = acc
+    def taint( 
+      addr       : Address,
+      state      : State[RHOCTxnEdge]
+    ) : Double = {
+      def baseCase( addrB : Address, stateB : State[RHOCTxnEdge] ) = {        
+        val ( cup, cap ) = cupNCap( addrB )
+        println( s"cup size is ${cup.size}" )
+        println( s"cap size is ${cap.size}" )
+        val cupLen = cup.length
+        val t =
+          cup.foldLeft( ( 0, 0.0 ) )(
+            ( acc, inTxnL ) => {
+              val ( idx, tnt ) = acc
+              if ( idx < ( cupLen - 1 ) ) {
                 val inTxnR = cup( idx + 1 )
-                val cTnt = taint( inTxnL, edgeMemo, addrMemo ) - taintOut( inTxnL, inTxnR, cap, edgeMemo, addrMemo )
+                val inTxnLTnt = taint( inTxnL, state )
+                val inTxnLOut = taintOut( inTxnL, inTxnR, cap, stateB )
+                val cTnt = inTxnLTnt - inTxnLOut
 
                 ( idx + 1, tnt + cTnt )
               }
-            )
-          addrMemo + ( addr -> t._1 )
-          t._1
+              else {
+                val inTxnLTnt = taint( inTxnL, stateB )
+                val inTxnLOut = taintOut( inTxnL, cap, state )
+                val cTnt = inTxnLTnt - inTxnLOut
+
+                ( idx + 1, tnt + cTnt )
+              }
+            }
+          )
+        println( s"t is calculated as ${t}" )
+        state.addrTaintMemo + ( addrB -> t._1 )
+        t._1
+      }
+
+      ( state.addrTaintMemo.get( addr ), state.addrCycles.get( addr ) ) match {
+        case ( None, None ) => {
+          println( s"requesting taint for ${addr.addr} for the first time" )
+          state.addrCycles += ( addr -> new Queue[Address]() )
+          baseCase( addr, state )
         }
-        case Some( t ) => t
+        case ( None, Some( cycle ) ) => {
+          if ( cycle.contains( addr ) ) {
+            println( s"requesting taint for ${addr.addr} cyclicly with cycle ${cycle}" )
+            0.0 // BUGBUG -- needs to use timestamp ordering
+          }
+          else {
+            cycle += addr
+            baseCase( addr, state )
+          }
+        }
+        case ( Some( t ), _ ) => t
       }
     }
 
@@ -628,12 +726,19 @@ object RHOCTxnGraphClosure
       val adjustmentsFile   = new File( adjFName )
       val adjustmentsWriter = new BufferedWriter( new FileWriter( adjustmentsFile ) )
 
-      val edgeMemo : Map[RHOCTxnEdge,Double] = new HashMap[RHOCTxnEdge,Double]()
-      val addrMemo : Map[Address,Double] = new HashMap[Address,Double]()
+      val edgeTaintMemo    : Map[RHOCTxnEdge,Double]             = new HashMap[RHOCTxnEdge,Double]()
+      val edgeWeightMemo   : Map[RHOCTxnEdge,Double]             = new HashMap[RHOCTxnEdge,Double]()
+      val addrTaintMemo    : Map[Address,Double]                 = new HashMap[Address,Double]()
+      val edgeTaintCycles  : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]] = new HashMap[RHOCTxnEdge,Queue[RHOCTxnEdge]]()
+      val edgeWeightCycles : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]] = new HashMap[RHOCTxnEdge,Queue[RHOCTxnEdge]]()
+      val addrCycles       : Map[Address,Queue[Address]]          = new HashMap[Address,Queue[Address]]()
+
+      val state            : State[RHOCTxnEdge]                  = 
+        State( edgeTaintMemo, edgeWeightMemo, addrTaintMemo, edgeTaintCycles, edgeWeightCycles, addrCycles )
 
       for( ( addr, balance ) <- balances() ) {
-        val address = new Address( addr, List[Double]( 0.0 ) )
-        val adjustment = taint( address, edgeMemo, addrMemo )
+        val address = new Address( addr.toLowerCase(), List[Double]( 0.0 ) )
+        val adjustment = taint( address, state )
         if ( adjustment > 0.00000001 ) { // RHOC precision
           println( s"${addr} -> ${adjustment}" )
           adjustmentsWriter.write( s"${addr}, ${balance}, ${adjustment}\n" )
