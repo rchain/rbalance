@@ -567,20 +567,20 @@ object RHOCTxnGraphClosure
       override val addrCycles       : Map[Address,Queue[Address]]
     ) extends StateT[RHOCTxnEdge]
 
-    def cup( addr : Address ) : List[RHOCTxnEdge] = {
+    def getCup( addr : Address ) : List[RHOCTxnEdge] = {
       txnData().filter( ( txnD ) => { txnD.trgt == addr } ).sortWith( sortTxnsByTimestamp )
     }
-    def cap( addr : Address ) : List[RHOCTxnEdge] = {
+    def getCap( addr : Address ) : List[RHOCTxnEdge] = {
       txnData().filter( ( txnD ) => { txnD.src == addr } ).sortWith( sortTxnsByTimestamp )
     }
-    def cupNCap( addr : Address ) : ( List[RHOCTxnEdge], List[RHOCTxnEdge] ) = { ( cup( addr ), cap( addr ) ) }
+    def cupNCap( addr : Address ) : ( List[RHOCTxnEdge], List[RHOCTxnEdge] ) = { ( getCup( addr ), getCap( addr ) ) }
     def weight( txn : RHOCTxnEdge, state : State[RHOCTxnEdge] ) : Double = {
       def baseCase( txnB : RHOCTxnEdge, stateB : State[RHOCTxnEdge] ) : Double = {        
         val w : Double =
           txnB match {
             case idTxn : RHOCTxnIdentity => idTxn.weight
             case tRep@RHOCTxnEdgeRep( s, _, tw, _, _, _, _, _ ) => {
-              cap( s ) match {
+              getCap( s ) match {
                 case Nil => throw new Exception( s"impossible cap: ${txn}" )
                 case t :: Nil => 1.0
                 case rTs => {
@@ -635,8 +635,8 @@ object RHOCTxnGraphClosure
       txn        : RHOCTxnEdge,
       state      : State[RHOCTxnEdge]
     ) : Double = {
-      def baseCase( txnB : RHOCTxnEdge, stateB : State[RHOCTxnEdge] ) : Double = {        
-        val t = weight( txnB, stateB ) * taint( txnB.src, stateB )
+      def baseCase( txnB : RHOCTxnEdge, cup : List[RHOCTxnEdge], stateB : State[RHOCTxnEdge] ) : Double = {        
+        val t = weight( txnB, stateB ) * taint( txnB.src, cup, stateB )
         println( s"t is calculated as ${t}" )
         stateB.edgeTaintMemo + ( txn -> t )
         t
@@ -646,27 +646,37 @@ object RHOCTxnGraphClosure
         case ( None, None ) => {
           println( s"requesting taint for ${txn} for the first time" )
           state.edgeTaintCycles += ( txn -> new Queue[RHOCTxnEdge]() )
-          baseCase( txn, state )
+          baseCase( txn, getCup( txn.src ), state )
         }
         case ( None, Some( cycle ) ) => {
           println( s"requesting taint for ${txn} cyclicly with cycle ${cycle}" )
           if ( cycle.contains( txn ) ) {
-            0.0 // BUGBUG - needs to use timestamp ordering
+            // BUGBUG - needs to use timestamp ordering
+            baseCase( txn, getCup( txn.src ).diff( cycle ), state )
           }
           else {
             cycle += txn
-            baseCase( txn, state )
+            baseCase( txn, getCup( txn.src ), state )
           }
         }
         case ( Some( t ), _ ) => t
       }
     }
-    def taint( 
+    
+    def taint(
       addr       : Address,
       state      : State[RHOCTxnEdge]
     ) : Double = {
+      taint( addr, getCup( addr ), state )
+    }
+
+    def taint(
+      addr       : Address,
+      cup        : List[RHOCTxnEdge],
+      state      : State[RHOCTxnEdge]
+    ) : Double = {
       def baseCase( addrB : Address, stateB : State[RHOCTxnEdge] ) = {        
-        val ( cup, cap ) = cupNCap( addrB )
+        val cap = getCap( addrB )
         println( s"cup size is ${cup.size}" )
         println( s"cap size is ${cap.size}" )
         val cupLen = cup.length
@@ -731,7 +741,7 @@ object RHOCTxnGraphClosure
       val addrTaintMemo    : Map[Address,Double]                 = new HashMap[Address,Double]()
       val edgeTaintCycles  : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]] = new HashMap[RHOCTxnEdge,Queue[RHOCTxnEdge]]()
       val edgeWeightCycles : Map[RHOCTxnEdge,Queue[RHOCTxnEdge]] = new HashMap[RHOCTxnEdge,Queue[RHOCTxnEdge]]()
-      val addrCycles       : Map[Address,Queue[Address]]          = new HashMap[Address,Queue[Address]]()
+      val addrCycles       : Map[Address,Queue[Address]]         = new HashMap[Address,Queue[Address]]()
 
       val state            : State[RHOCTxnEdge]                  = 
         State( edgeTaintMemo, edgeWeightMemo, addrTaintMemo, edgeTaintCycles, edgeWeightCycles, addrCycles )
