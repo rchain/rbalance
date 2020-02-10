@@ -15,10 +15,10 @@ object AdjustmentConstants {
   val maxBlockHeight   : Int                = 9371743
   val barcelonaLabel   : String             = "Barcelona"
   val barcelonaAddr    : String             = "0xEb148735F7e75B41AAF344CDa706b8F95d5E39d4"
-  val barcelonaTaint   : Double             = 1100000000000000.0
+  val barcelonaTaint   : Double             = 11000000.0
   val pithiaLabel      : String             = "Pithia"
   val pithiaAddr       : String             = "0xcd9910aea989e9b0b6b3e1192a474b5200e88c6b"
-  val pithiaTaint      : Double             = 6000000000000000.0
+  val pithiaTaint      : Double             = 60000000.0
   val taintLabels      : Map[String,String] = {
     val m = new HashMap[String,String]()
     (m + ( pithiaLabel -> pithiaAddr ) + ( barcelonaLabel -> barcelonaAddr ))
