@@ -89,7 +89,21 @@ case class RHOCTxnEdgeRep(
   override val blockId       : String,
   override val justification : Set[RHOCTxnEdge],
   var moreJust               : Set[RHOCTxnEdge]
-) extends RHOCTxnEdge
+) extends RHOCTxnEdge {
+  def shortenAddress( addr : String ) : String = {
+    s"${addr.take( 6 )}...${addr.drop( addr.length - 5 )}"
+  }
+  override def toString() : String = {
+    s"${shortenAddress( src.addr )} -${shortenAddress( hash )}: ${weight}-> ${shortenAddress( trgt.addr )}"
+  }
+  override def equals( a : Any ) = {
+    a match {
+      case RHOCTxnRep( _, _, _, `hash`, _, _ ) => true
+      case _ => false
+    }
+  }
+  override def hashCode = ( hash ).##
+}
 
 object RHOCTxnGraphClosure 
     extends JustifiedClosure[Address, RHOCTxnEdge] with InputCSVData {
@@ -190,11 +204,70 @@ object RHOCTxnGraphClosure
   def txnData() : List[RHOCTxnEdge] = {
     txnDataV match {
       case None => {
-        val txnD = barcelonaEdge :: pithiaEdge :: loadAndFormatTxnData().filter( ( t ) => { t.src != t.trgt } )
+        val txnD = barcelonaEdge :: pithiaEdge :: ( loadAndFormatTxnData().filter( ( t ) => { t.src != t.trgt } ) ).toSet.toList
         txnDataV = Some( txnD )
         txnD
       }
       case Some( txnD ) => txnD
+    }
+  }
+
+  def getAddrList( txns : List[RHOCTxnEdge] ) : List[Address] = {
+    val addrSrcs  : Set[Address]  = txnData().map( _.trgt ).toSet
+    val addrTrgts : Set[Address]  = txnData().map( _.trgt ).toSet
+    ( addrSrcs ++ addrTrgts ).toList
+  }
+
+  var addrListV : Option[List[Address]] = None
+  def addrList() : List[Address] = {
+    addrListV match {
+      case None => {
+        val addrL     : List[Address] = getAddrList( txnData() )
+        addrListV = Some( addrL )
+        addrL
+      }
+      case Some( addrL ) => addrL
+    }
+  }
+
+  def nodeStatement( addr : Address ) : String = {
+    "\"" + s"n${addr.addr}" + "\""
+  }
+  def edgeStatement( txn : RHOCTxnEdge ) : String = {
+    "\"" + s"n${txn.src.addr}" + "\"" + " -> " + "\"" + s"n${txn.trgt.addr}" + "\""
+  }
+
+  def getDotExpr( txns : List[RHOCTxnEdge] ) : String = {
+    val addrL = getAddrList( txns )
+    val addrsButLast = addrL.take( addrList().length - 2 )
+    val lastAddr = addrList.last
+    val txnsButLast = txns.take( txnData().length - 2 )
+    val lastTxn = txns.last
+    val nodeStmts = addrsButLast.foldLeft( "" )(
+      ( acc, addr ) => {
+        if ( acc == "" ) {
+          s"${nodeStatement( addr )}"
+        }
+        else {
+          s"${acc};\n${nodeStatement( addr )}"
+        }
+      }
+    ) + s";\n${nodeStatement( lastAddr )}"
+    val edgeStmts = txnsButLast.foldLeft( "" )(
+      ( acc, txn ) => { s"${acc};\n${edgeStatement( txn )}" }
+    ) + s";\n${edgeStatement( lastTxn )}"
+    s"digraph TaintRemoval {\n${nodeStmts}${edgeStmts}\n}"
+  }
+
+  var dotExprV : Option[String] = None
+  def dotExpr() : String = {
+    dotExprV match {
+      case None => {        
+        val dotExp = getDotExpr( txnData() )
+        dotExprV = Some( dotExp )
+        dotExp
+      }
+      case Some( dotExp ) => dotExp
     }
   }
 
@@ -605,33 +678,20 @@ object RHOCTxnGraphClosure
                 case Nil => throw new Exception( s"impossible cap: ${txn}" )
                 case t :: Nil => 1.0
                 case rTs => {
+                  if ( feedback > 0 ) { println( s"shareDeposits of ${txn} is ${rTs}" ) }
                   tw / rTs.foldLeft( 0.0 )( ( acc, t ) => { acc + t.weight } )
                 }
               }
             }
           }
         stateB.edgeWeightMemo += ( txnB -> w )
-        if ( feedback > 2 ) { println( s"w is calculated as ${w}" ) }
+        if ( feedback > 0 ) { println( s"w is calculated as ${w}" ) }
         w
       }
 
-      ( state.edgeTaintMemo.get( txn ), state.edgeWeightCycles.get( txn ) ) match {
-        case ( None, None ) => {
-          if ( feedback > 2 ) { println( s"requesting weight for ${txn} for the first time" ) }
-          state.edgeWeightCycles += ( txn -> new Queue[RHOCTxnEdge]() )
-          baseCase( txn, state )
-        }
-        case ( None, Some( cycle ) ) => {
-          if ( feedback > 2 ) { println( s"cyclicly requesting weight for ${txn} with cycle length ${cycle.length}" ) }
-          if ( cycle.contains( txn ) ) {
-            0.0 // BUGBUG -- needs to use timestamp ordering
-          }
-          else {
-            cycle += txn
-            baseCase( txn, state )
-          }
-        }
-        case ( Some( w ), _ ) => w
+      ( state.edgeWeightMemo.get( txn ) ) match {
+        case None => { baseCase( txn, state ) }        
+        case Some( w ) => w
       }
     }
     def taintOut(
@@ -656,13 +716,16 @@ object RHOCTxnGraphClosure
       txn        : RHOCTxnEdge,
       state      : State[RHOCTxnEdge]
     ) : Double = {      
-      def baseCase( txnB : RHOCTxnEdge, cycle : Queue[RHOCTxnEdge], stateB : State[RHOCTxnEdge] ) : Double = {
+      def baseCase( txnB : RHOCTxnEdge, tCycle : Queue[RHOCTxnEdge], stateB : State[RHOCTxnEdge] ) : Double = {
         depositBounds( txnB ) match {
           case ( None, _ ) => 0.0 // This is a pure source
           case ( Some( l ), _ ) => {
+            tCycle += txnB
             val t = 
-              if ( !cycle.contains( l ) ) {
+              if ( !( tCycle.contains( l ) ) ) {
                 //taint( txnB.src, cup, stateB )
+                if ( feedback > 0 ) { println( s"lower bound of ${txnB} is ${l}" ) }
+                tCycle += l
                 weight( txnB, stateB ) * taint( l, stateB )
               }
               else {
@@ -679,16 +742,15 @@ object RHOCTxnGraphClosure
         case _ => {
           ( state.edgeTaintMemo.get( txn ), state.edgeTaintCycles.get( txn ) ) match {
             case ( None, None ) => {
-              if ( feedback > 2 ) { println( s"requesting taint for ${txn} for the first time" ) }
-              val cycle = new Queue[RHOCTxnEdge]()
-              state.edgeTaintCycles += ( txn -> cycle )
+              if ( feedback > 0 ) { println( s"requesting taint for ${txn} for the first time" ) }
+              val tCycle = new Queue[RHOCTxnEdge]()
+              state.edgeTaintCycles += ( txn -> tCycle )
               //baseCase( txn, getCup( txn.src ), state )
-              baseCase( txn, cycle, state )
+              baseCase( txn, tCycle, state )
             }
-            case ( None, Some( cycle ) ) => {
-              if ( feedback > 2 ) { println( s"cyclicly requesting taint for ${txn} with cycle length ${cycle.length}" ) }
-              cycle += txn
-              baseCase( txn, cycle, state )
+            case ( None, Some( tCycle ) ) => {
+              if ( feedback > 0 ) { println( s"cyclicly requesting taint for ${txn} with cycle length ${tCycle.length}" ) }
+              baseCase( txn, tCycle, state )
             }
             case ( Some( t ), _ ) => t
           }
@@ -757,13 +819,13 @@ object RHOCTxnGraphClosure
 
       ( state.addrTaintMemo.get( addr ), state.addrCycles.get( addr ) ) match {
         case ( None, None ) => {
-          if ( feedback > 2 ) { println( s"requesting taint for ${addr.addr} for the first time" ) }
+          if ( feedback > 0 ) { println( s"requesting taint for ${addr.addr} for the first time" ) }
           state.addrCycles += ( addr -> new Queue[Address]() )
           baseCase( addr, cup, state )
         }
         case ( None, Some( cycle ) ) => {
           if ( cycle.contains( addr ) ) {
-            if ( feedback > 2 ) { println( s"cyclicly requesting taint for ${addr.addr} with cycle.length ${cycle.length}" ) }
+            if ( feedback > 0 ) { println( s"cyclicly requesting taint for ${addr.addr} with cycle.length ${cycle.length}" ) }
             // BUGBUG -- needs to use timestamp ordering
             val nCup = cup.filter( ( t ) => { !( cycle.contains( t.trgt ) ) } )
             if ( nCup.length == cupLen ) {
@@ -796,6 +858,23 @@ object RHOCTxnGraphClosure
       val state : State[RHOCTxnEdge] = freshState()
     }
 
+    def makeDotFile( txns : List[RHOCTxnEdge] ) : Unit = {
+      val dotDir = AdjustmentConstants.reportingDir
+      val dotFileName = annotateFileName( AdjustmentConstants.dotFile, "Combined" )
+      val dotFName          = s"${dotDir}/${dotFileName}"
+
+      val dotFile   = new File( dotFName )
+      val dotWriter = new BufferedWriter( new FileWriter( dotFile ) )
+
+      dotWriter.write( s"${getDotExpr( txns )}" )
+      dotWriter.flush()
+      dotWriter.close()
+    }
+
+    def makeDotFile() : Unit = {
+      makeDotFile( txnData() )
+    }
+    
     def reportAdjustments( ) : Unit = {
       val adjDir = AdjustmentConstants.reportingDir
       val adjFileName = annotateFileName( AdjustmentConstants.adjustmentsFile, "Combined" )

@@ -8,6 +8,7 @@ object AdjustmentConstants {
 
   val adjustmentsFile  : String             = "adjustments.csv"
   val proofFile        : String             = "proof.csv"
+  val dotFile          : String             = "transactionGraph.dot"
   val reportingDir     : String             = "/Users/lgm/work/projex/rchain/adjustedBalances/rbalance/src/main/resources" 
 
   val rhocContractAddr : String             = "0x168296bb09e24a88805cb9c33356536b980d3fc5"
